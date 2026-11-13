@@ -1,0 +1,490 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<discogs>
+  <artists>
+    <artist>
+      <id>194</id>
+      <name>Various</name>
+      <realname></realname>
+      <profile>Bridge artist. Paths through Various are ignored.</profile>
+      <data_quality>Correct</data_quality>
+    </artist>
+    <artist>
+      <id>355</id>
+      <name>Unknown Artist</name>
+      <realname></realname>
+      <profile></profile>
+      <data_quality>Correct</data_quality>
+    </artist>
+    <artist>
+      <id>200</id>
+      <name>Ada</name>
+      <realname>Michaela Dippel</realname>
+      <profile>Plays on Workshop and, under another name, on Dial.</profile>
+      <data_quality>Correct</data_quality>
+      <namevariations>
+        <name>A.D.A.</name>
+      </namevariations>
+      <aliases>
+        <name id="201">Ada (Solo)</name>
+      </aliases>
+      <groups>
+        <name id="209">Alliage</name>
+      </groups>
+      <urls>
+        <url>https://ada.example</url>
+      </urls>
+      <images>
+        <image type="primary" />
+      </images>
+    </artist>
+    <artist>
+      <id>201</id>
+      <name>Ada (Solo)</name>
+      <realname>Michaela Dippel</realname>
+      <profile>Alias of Ada.</profile>
+      <data_quality>Correct</data_quality>
+      <aliases>
+        <name id="200">Ada</name>
+      </aliases>
+    </artist>
+    <artist>
+      <id>202</id>
+      <name>Move D</name>
+      <realname>David Moufang</realname>
+      <profile>Workshop regular who remixed a Dial record.</profile>
+      <data_quality>Correct</data_quality>
+    </artist>
+    <artist>
+      <id>203</id>
+      <name>Lawrence</name>
+      <realname>Peter Kersten</realname>
+      <profile>Released on Workshop and Dial.</profile>
+      <data_quality>Correct</data_quality>
+    </artist>
+    <artist>
+      <id>204</id>
+      <name>Isolée</name>
+      <realname></realname>
+      <profile>Appears on compilations.</profile>
+      <data_quality>Correct</data_quality>
+    </artist>
+    <artist>
+      <id>205</id>
+      <name>Journeyman</name>
+      <realname></realname>
+      <profile>One Workshop record and a self-released single.</profile>
+      <data_quality>Needs Vote</data_quality>
+    </artist>
+    <artist>
+      <id>206</id>
+      <name>Blues Person</name>
+      <realname></realname>
+      <profile>Kept only because the label is seeded.</profile>
+      <data_quality>Correct</data_quality>
+    </artist>
+    <artist>
+      <id>207</id>
+      <name>Ghost</name>
+      <realname></realname>
+      <profile>Pop release that the filter drops.</profile>
+      <data_quality>Correct</data_quality>
+    </artist>
+    <artist>
+      <id>209</id>
+      <name>Alliage</name>
+      <realname></realname>
+      <profile>A group.</profile>
+      <data_quality>Correct</data_quality>
+      <members>
+        <name id="200">Ada</name>
+      </members>
+    </artist>
+  </artists>
+  <labels>
+    <label>
+      <id>10</id>
+      <name>Workshop</name>
+      <contactinfo>Berlin</contactinfo>
+      <profile>Small house label.</profile>
+      <data_quality>Correct</data_quality>
+      <urls>
+        <url>https://workshop.example</url>
+      </urls>
+      <sublabels>
+        <label id="12">Workshop Sub</label>
+      </sublabels>
+      <images>
+        <image type="primary" />
+      </images>
+    </label>
+    <label>
+      <id>11</id>
+      <name>Dial</name>
+      <contactinfo>Hamburg</contactinfo>
+      <profile>House label that shares a few artists with Workshop.</profile>
+      <data_quality>Correct</data_quality>
+    </label>
+    <label>
+      <id>12</id>
+      <name>Workshop Sub</name>
+      <contactinfo>Berlin</contactinfo>
+      <profile>A child of Workshop.</profile>
+      <data_quality>Correct</data_quality>
+      <parentLabel id="10">Workshop</parentLabel>
+    </label>
+    <label>
+      <id>99</id>
+      <name>Not On Label</name>
+      <contactinfo></contactinfo>
+      <profile>Self-released bucket. Ignored by similarity.</profile>
+      <data_quality>Needs Vote</data_quality>
+    </label>
+    <label>
+      <id>15</id>
+      <name>Odd Seed</name>
+      <contactinfo></contactinfo>
+      <profile>Kept via the seed list even though the music is not electronic.</profile>
+      <data_quality>Correct</data_quality>
+    </label>
+    <label>
+      <id>16</id>
+      <name>Major</name>
+      <contactinfo></contactinfo>
+      <profile>Pop label dropped by the style filter.</profile>
+      <data_quality>Correct</data_quality>
+    </label>
+  </labels>
+  <releases>
+    <release id="1" status="Accepted">
+      <title>Werk</title>
+      <country>Germany</country>
+      <released>2004-06-01</released>
+      <notes>Ada and Lawrence together.</notes>
+      <data_quality>Correct</data_quality>
+      <master_id is_main_release="true">1000</master_id>
+      <artists>
+        <artist><id>200</id><name>Ada</name><anv>ADA</anv><join>&amp;</join><role></role></artist>
+        <artist><id>203</id><name>Lawrence</name><anv></anv><join></join><role></role></artist>
+      </artists>
+      <labels>
+        <label name="Workshop" catno="WW-01" id="10" />
+      </labels>
+      <formats>
+        <format name="Vinyl" qty="1" text="">
+          <descriptions>
+            <description>12&quot;</description>
+            <description>45 RPM</description>
+          </descriptions>
+        </format>
+      </formats>
+      <genres><genre>Electronic</genre></genres>
+      <styles><style>House</style><style>Minimal</style></styles>
+      <tracklist>
+        <track>
+          <position>A</position>
+          <title>Werk</title>
+          <duration>6:40</duration>
+        </track>
+      </tracklist>
+      <identifiers>
+        <identifier type="Barcode" value="123456" description="" />
+      </identifiers>
+      <videos>
+        <video src="https://video.example/werk">
+          <title>Werk clip</title>
+        </video>
+      </videos>
+      <companies>
+        <company>
+          <id>50</id>
+          <name>Optimal Media</name>
+          <entity_type_name>Pressed By</entity_type_name>
+          <catno></catno>
+        </company>
+      </companies>
+      <images>
+        <image type="primary" />
+        <image type="secondary" />
+      </images>
+    </release>
+    <release id="2" status="Accepted">
+      <title>Werk</title>
+      <country>Germany</country>
+      <released>2012</released>
+      <notes>Repress of the same master. Counts once toward similarity.</notes>
+      <data_quality>Correct</data_quality>
+      <master_id is_main_release="false">1000</master_id>
+      <artists>
+        <artist><id>200</id><name>Ada</name><anv></anv><join></join><role></role></artist>
+        <artist><id>203</id><name>Lawrence</name><anv></anv><join></join><role></role></artist>
+      </artists>
+      <labels>
+        <label name="Workshop" catno="WW-01R" id="10" />
+      </labels>
+      <formats>
+        <format name="Vinyl" qty="1">
+          <descriptions><description>12&quot;</description><description>Repress</description></descriptions>
+        </format>
+      </formats>
+      <genres><genre>Electronic</genre></genres>
+      <styles><style>House</style></styles>
+    </release>
+    <release id="3" status="Accepted">
+      <title>Dialed</title>
+      <country>Germany</country>
+      <released>2008-03-01</released>
+      <notes>Lawrence record with a Move D remix on the flip.</notes>
+      <data_quality>Correct</data_quality>
+      <master_id is_main_release="true">2000</master_id>
+      <artists>
+        <artist><id>203</id><name>Lawrence</name><anv></anv><join></join><role></role></artist>
+      </artists>
+      <labels>
+        <label name="Dial" catno="DIAL-01" id="11" />
+      </labels>
+      <formats>
+        <format name="Vinyl" qty="1">
+          <descriptions><description>12&quot;</description></descriptions>
+        </format>
+      </formats>
+      <genres><genre>Electronic</genre></genres>
+      <styles><style>Deep House</style></styles>
+      <tracklist>
+        <track>
+          <position>A</position>
+          <title>Dialed</title>
+          <duration>8:00</duration>
+        </track>
+        <track>
+          <position>B</position>
+          <title>Dialed (Move D Remix)</title>
+          <duration>7:10</duration>
+          <extraartists>
+            <artist><id>202</id><name>Move D</name><anv></anv><role>Remix</role></artist>
+          </extraartists>
+        </track>
+      </tracklist>
+    </release>
+    <release id="4" status="Accepted">
+      <title>Night</title>
+      <country>Germany</country>
+      <released>2010</released>
+      <notes></notes>
+      <data_quality>Correct</data_quality>
+      <master_id is_main_release="true">1001</master_id>
+      <artists>
+        <artist><id>202</id><name>Move D</name><anv></anv><join></join><role></role></artist>
+      </artists>
+      <labels>
+        <label name="Workshop" catno="WW-02" id="10" />
+      </labels>
+      <formats>
+        <format name="Vinyl" qty="1">
+          <descriptions><description>12&quot;</description></descriptions>
+        </format>
+      </formats>
+      <genres><genre>Electronic</genre></genres>
+      <styles><style>Dub Techno</style></styles>
+    </release>
+    <release id="5" status="Accepted">
+      <title>Workshop Compiled</title>
+      <country>Germany</country>
+      <released>2011</released>
+      <notes>Various must not become a bridge.</notes>
+      <data_quality>Correct</data_quality>
+      <master_id is_main_release="true">1002</master_id>
+      <artists>
+        <artist><id>194</id><name>Various</name><anv></anv><join></join><role></role></artist>
+      </artists>
+      <labels>
+        <label name="Workshop" catno="WW-03" id="10" />
+      </labels>
+      <formats>
+        <format name="Vinyl" qty="2">
+          <descriptions><description>12&quot;</description><description>Compilation</description></descriptions>
+        </format>
+      </formats>
+      <genres><genre>Electronic</genre></genres>
+      <styles><style>House</style></styles>
+      <tracklist>
+        <track>
+          <position>A1</position>
+          <title>Night Bus</title>
+          <duration>5:00</duration>
+          <artists>
+            <artist><id>204</id><name>Isolée</name><anv></anv><role></role></artist>
+          </artists>
+        </track>
+      </tracklist>
+    </release>
+    <release id="6" status="Accepted">
+      <title>Dial Compiled</title>
+      <country>Germany</country>
+      <released>2014</released>
+      <notes></notes>
+      <data_quality>Correct</data_quality>
+      <master_id is_main_release="true">2002</master_id>
+      <artists>
+        <artist><id>194</id><name>Various</name><anv></anv><join></join><role></role></artist>
+      </artists>
+      <labels>
+        <label name="Dial" catno="DIAL-09" id="11" />
+      </labels>
+      <formats>
+        <format name="Vinyl" qty="1">
+          <descriptions><description>Compilation</description></descriptions>
+        </format>
+      </formats>
+      <genres><genre>Electronic</genre></genres>
+      <styles><style>House</style></styles>
+      <tracklist>
+        <track>
+          <position>A</position>
+          <title>Window</title>
+          <duration>4:00</duration>
+          <artists>
+            <artist><id>204</id><name>Isolée</name><anv></anv><role></role></artist>
+          </artists>
+        </track>
+      </tracklist>
+    </release>
+    <release id="7" status="Accepted">
+      <title>Solo</title>
+      <country>Germany</country>
+      <released>2018</released>
+      <notes>Released under the alias.</notes>
+      <data_quality>Correct</data_quality>
+      <master_id is_main_release="true">3000</master_id>
+      <artists>
+        <artist><id>201</id><name>Ada (Solo)</name><anv></anv><join></join><role></role></artist>
+      </artists>
+      <labels>
+        <label name="Dial" catno="DIAL-20" id="11" />
+      </labels>
+      <formats>
+        <format name="File" qty="1">
+          <descriptions><description>FLAC</description></descriptions>
+        </format>
+      </formats>
+      <genres><genre>Electronic</genre></genres>
+      <styles><style>House</style></styles>
+    </release>
+    <release id="8" status="Accepted">
+      <title>Sub</title>
+      <country>Germany</country>
+      <released>2016</released>
+      <notes></notes>
+      <data_quality>Correct</data_quality>
+      <master_id is_main_release="true">1003</master_id>
+      <artists>
+        <artist><id>200</id><name>Ada</name><anv></anv><join></join><role></role></artist>
+      </artists>
+      <labels>
+        <label name="Workshop Sub" catno="SUB-1" id="12" />
+      </labels>
+      <formats>
+        <format name="Vinyl" qty="1">
+          <descriptions><description>12&quot;</description></descriptions>
+        </format>
+      </formats>
+      <genres><genre>Electronic</genre></genres>
+      <styles><style>Techno</style></styles>
+    </release>
+    <release id="9" status="Accepted">
+      <title>Self</title>
+      <country>Germany</country>
+      <released>2015</released>
+      <notes>Denied label.</notes>
+      <data_quality>Needs Vote</data_quality>
+      <artists>
+        <artist><id>205</id><name>Journeyman</name><anv></anv><join></join><role></role></artist>
+      </artists>
+      <labels>
+        <label name="Not On Label" catno="none" id="99" />
+      </labels>
+      <formats>
+        <format name="File" qty="1">
+          <descriptions><description>MP3</description></descriptions>
+        </format>
+      </formats>
+      <genres><genre>Electronic</genre></genres>
+      <styles><style>House</style></styles>
+    </release>
+    <release id="10" status="Accepted">
+      <title>Passing Through</title>
+      <country>Germany</country>
+      <released>2009</released>
+      <notes></notes>
+      <data_quality>Correct</data_quality>
+      <master_id is_main_release="true">1004</master_id>
+      <artists>
+        <artist><id>205</id><name>Journeyman</name><anv></anv><join></join><role></role></artist>
+      </artists>
+      <labels>
+        <label name="Workshop" catno="WW-04" id="10" />
+      </labels>
+      <formats>
+        <format name="Vinyl" qty="1">
+          <descriptions><description>12&quot;</description></descriptions>
+        </format>
+      </formats>
+      <genres><genre>Electronic</genre></genres>
+      <styles><style>House</style></styles>
+    </release>
+    <release id="11" status="Accepted">
+      <title>Odd Blues</title>
+      <country>United States</country>
+      <released>1998</released>
+      <notes>Not electronic, kept because Odd Seed is on the seed list.</notes>
+      <data_quality>Correct</data_quality>
+      <artists>
+        <artist><id>206</id><name>Blues Person</name><anv></anv><join></join><role></role></artist>
+      </artists>
+      <labels>
+        <label name="Odd Seed" catno="ODD-1" id="15" />
+      </labels>
+      <formats>
+        <format name="Vinyl" qty="1">
+          <descriptions><description>LP</description></descriptions>
+        </format>
+      </formats>
+      <genres><genre>Rock</genre></genres>
+      <styles><style>Blues</style></styles>
+    </release>
+    <release id="12" status="Accepted">
+      <title>Chart Song</title>
+      <country>United States</country>
+      <released>2020</released>
+      <notes>Dropped.</notes>
+      <data_quality>Correct</data_quality>
+      <artists>
+        <artist><id>207</id><name>Ghost</name><anv></anv><join></join><role></role></artist>
+      </artists>
+      <labels>
+        <label name="Major" catno="MAJ-1" id="16" />
+      </labels>
+      <formats>
+        <format name="File" qty="1">
+          <descriptions><description>MP3</description></descriptions>
+        </format>
+      </formats>
+      <genres><genre>Pop</genre></genres>
+      <styles><style>Europop</style></styles>
+    </release>
+    <release id="13" status="Deleted">
+      <title>Gone</title>
+      <country>Germany</country>
+      <released>2001</released>
+      <notes>Dropped because it is not accepted.</notes>
+      <data_quality>Correct</data_quality>
+      <artists>
+        <artist><id>203</id><name>Lawrence</name><anv></anv><join></join><role></role></artist>
+      </artists>
+      <labels>
+        <label name="Workshop" catno="WW-00" id="10" />
+      </labels>
+      <genres><genre>Electronic</genre></genres>
+      <styles><style>House</style></styles>
+    </release>
+  </releases>
+</discogs>

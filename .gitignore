@@ -1,0 +1,10 @@
+node_modules/
+.tools/
+dist/
+.env
+data/*
+!data/README.md
+*.log
+.DS_Store
+web/dist/
+.pnpm-store/*
