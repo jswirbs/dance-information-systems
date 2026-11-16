@@ -31,6 +31,11 @@ const COLOR: Record<string, string> = {
 
 const TYPES: EntityType[] = ["artist", "label", "release"];
 const FOCUS_ZOOM = 2.4;
+const PATH_STEP = 150;
+const PATH_STAGGER = 36;
+const PATH_CHAR_WIDTH = 6.4;
+
+type GraphLayout = "force" | "path";
 
 export function GraphView({
   payload,
@@ -40,6 +45,7 @@ export function GraphView({
   onSelect,
   emptyMessage = "Add a seed to draw the neighborhood.",
   showNodeCap = true,
+  layout = "force",
 }: {
   payload: GraphPayload | null;
   selectedId: string | null;
@@ -48,6 +54,7 @@ export function GraphView({
   onSelect: (type: DrawNode["entityType"], id: number) => void;
   emptyMessage?: string;
   showNodeCap?: boolean;
+  layout?: GraphLayout;
 }) {
   const ref = useRef<ForceGraphMethods | undefined>(undefined);
   const frameRef = useRef<HTMLDivElement>(null);
@@ -59,8 +66,9 @@ export function GraphView({
   const [visible, setVisible] = useState<Record<EntityType, boolean>>({ artist: true, label: true, release: true });
   const closeSettings = useCallback(() => setOpen(false), []);
   const closeMenu = useCallback(() => setMenu(null), []);
-  const graphStore = useRef<{ signature: string; data: SimGraph; cache: Map<string, DrawNode> }>({
+  const graphStore = useRef<{ signature: string; layout: GraphLayout; data: SimGraph; cache: Map<string, DrawNode> }>({
     signature: "",
+    layout,
     data: { nodes: [], links: [] },
     cache: new Map(),
   });
@@ -68,15 +76,16 @@ export function GraphView({
 
   const projected = useMemo(() => projectGraph(payload, removed, visible), [payload, removed, visible]);
   const data = useMemo(() => {
-    const signature = graphSignature(projected);
+    const signature = layout === "path" ? orderedSignature(projected) : graphSignature(projected);
     const store = graphStore.current;
-    if (signature === store.signature) return store.data;
+    if (signature === store.signature && store.layout === layout) return store.data;
     // Keep the same node objects so x/y survive. A fresh object list makes the
     // force layout treat every node as new and fly in from the origin.
     store.signature = signature;
-    store.data = adoptGraph(projected, store.cache);
+    store.layout = layout;
+    store.data = adoptGraph(projected, store.cache, layout);
     return store.data;
-  }, [projected]);
+  }, [projected, layout]);
 
   const ready = size.width > 0 && size.height > 0;
 
@@ -95,13 +104,14 @@ export function GraphView({
   }, []);
 
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || layout === "path") return;
     const linkForce = ref.current?.d3Force("link") as { distance?: (fn: (link: GraphPayload["links"][number]) => number) => void } | undefined;
     linkForce?.distance?.((link) => (link.kind === "SIMILAR" && link.score ? Math.max(40, 150 / link.score) : 46));
     ref.current?.d3ReheatSimulation();
-  }, [data, ready]);
+  }, [data, ready, layout]);
 
   useEffect(() => {
+    if (layout === "path") return;
     if (!selectedId) {
       focusedId.current = null;
       return;
@@ -114,7 +124,14 @@ export function GraphView({
     // Zoom first so the center tween runs last and lands on the node.
     graph.zoom(FOCUS_ZOOM, 500);
     graph.centerAt(node.x, node.y, 500);
-  }, [selectedId, data.nodes, ready]);
+  }, [selectedId, data.nodes, ready, layout]);
+
+  useEffect(() => {
+    if (layout !== "path" || !ready || data.nodes.length === 0) return;
+    const graph = ref.current;
+    if (!graph) return;
+    fitPath(graph, data.nodes, size.width, size.height);
+  }, [layout, ready, data, size.width, size.height]);
 
   return (
     <>
@@ -240,11 +257,54 @@ function graphSignature(graph: PlainGraph): string {
   return `${nodes}\n~\n${links}`;
 }
 
-function adoptGraph(graph: PlainGraph, cache: Map<string, DrawNode>): SimGraph {
+function orderedSignature(graph: PlainGraph): string {
+  const nodes = graph.nodes.map((node) => `${node.id}\0${node.seed ? 1 : 0}`).join("\n");
+  const links = graph.links.map((link) => `${link.kind}\0${link.source}\0${link.target}`).join("\n");
+  return `${nodes}\n~\n${links}`;
+}
+
+function adoptGraph(graph: PlainGraph, cache: Map<string, DrawNode>, layout: GraphLayout): SimGraph {
   const seeds = graph.nodes.filter((node) => node.seed);
   const nodes = graph.nodes.map((node) => reuseNode(node, seeds, cache));
-  placeNewcomers(nodes, graph.links);
+  if (layout === "path") pinPath(nodes);
+  else placeNewcomers(nodes, graph.links);
   return { nodes, links: graph.links.map((link) => ({ ...link })) };
+}
+
+function pinPath(nodes: DrawNode[]) {
+  const mid = (nodes.length - 1) / 2;
+  nodes.forEach((node, index) => {
+    const x = (index - mid) * PATH_STEP;
+    const y = (index % 2) * PATH_STAGGER;
+    node.fx = x;
+    node.fy = y;
+    node.x = x;
+    node.y = y;
+    node.vx = 0;
+    node.vy = 0;
+  });
+}
+
+function fitPath(graph: ForceGraphMethods, nodes: DrawNode[], width: number, height: number) {
+  let minX = Infinity;
+  let maxX = -Infinity;
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const node of nodes) {
+    const x = node.x ?? 0;
+    const y = node.y ?? 0;
+    const label = node.name.length * PATH_CHAR_WIDTH;
+    minX = Math.min(minX, x - 14);
+    maxX = Math.max(maxX, x + 14 + label);
+    minY = Math.min(minY, y - 14);
+    maxY = Math.max(maxY, y + 14);
+  }
+  const pad = 36;
+  const spanX = Math.max(maxX - minX, 1);
+  const spanY = Math.max(maxY - minY, 1);
+  const scale = Math.min(FOCUS_ZOOM, (width - pad * 2) / spanX, (height - pad * 2) / spanY);
+  graph.zoom(Math.max(scale, 0.15), 400);
+  graph.centerAt((minX + maxX) / 2, (minY + maxY) / 2, 400);
 }
 
 function reuseNode(node: GraphNode, seeds: GraphNode[], cache: Map<string, DrawNode>): DrawNode {

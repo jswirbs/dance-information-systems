@@ -3,7 +3,7 @@ import { PATH_MAX_HOPS } from "../../src/shared/constants";
 import type { EntityType, PathKind, PathPayload, PathTrack, RelatedRow, SearchHit } from "../../src/shared/types";
 import { parseYouTubeId } from "../../src/shared/youtube";
 import { api } from "./api";
-import { PathPlayer } from "./PathPlayer";
+import { PathPlayer, warmupYouTube } from "./PathPlayer";
 import { ScrollList, Thumb } from "./ui";
 
 const SLOT_LABELS = ["A", "B"];
@@ -45,6 +45,7 @@ export function PathPanel({
   const cache = useRef(new Map<number, string | null>());
   const tracksRef = useRef(tracks);
   const playbackRef = useRef(playback);
+  const resolvingRef = useRef<number | null>(null);
   tracksRef.current = tracks;
   playbackRef.current = playback;
 
@@ -53,8 +54,13 @@ export function PathPanel({
     cache.current.clear();
     setPlayback(null);
     setResolving(null);
+    resolvingRef.current = null;
     setFailed([]);
   }, [trackKey]);
+
+  useEffect(() => {
+    if (tracks.length > 0) warmupYouTube();
+  }, [tracks.length]);
 
   async function resolveVideo(track: PathTrack): Promise<string | null> {
     if (cache.current.has(track.hopIndex)) return cache.current.get(track.hopIndex) ?? null;
@@ -74,36 +80,37 @@ export function PathPanel({
   }
 
   async function playAt(index: number) {
+    if (resolvingRef.current === index) return;
     const current = playbackRef.current;
     if (current?.index === index) {
       setPlayback({ ...current, paused: !current.paused });
       return;
     }
+    await loadAt(index);
+  }
+
+  async function loadAt(index: number): Promise<boolean> {
     const track = tracksRef.current[index];
-    if (!track) return;
+    if (!track) return false;
+    resolvingRef.current = index;
     setResolving(index);
     const videoId = await resolveVideo(track);
+    resolvingRef.current = null;
     setResolving(null);
     if (!videoId) {
       setFailed((current) => (current.includes(index) ? current : [...current, index]));
-      return;
+      return false;
     }
     setPlayback({ index, videoId, paused: false });
+    return true;
   }
 
-  async function playNext(fromIndex: number) {
+  async function skipFrom(fromIndex: number, step: 1 | -1, closeIfNone: boolean) {
     const list = tracksRef.current;
-    for (let index = fromIndex + 1; index < list.length; index += 1) {
-      const track = list[index]!;
-      setResolving(index);
-      const videoId = await resolveVideo(track);
-      setResolving(null);
-      if (videoId) {
-        setPlayback({ index, videoId, paused: false });
-        return;
-      }
+    for (let index = fromIndex + step; index >= 0 && index < list.length; index += step) {
+      if (await loadAt(index)) return;
     }
-    setPlayback(null);
+    if (closeIfNone) setPlayback(null);
   }
 
   return (
@@ -200,9 +207,19 @@ export function PathPanel({
             <PathPlayer
               videoId={playback.videoId}
               paused={playback.paused}
+              canPrev={playback.index > 0}
+              canNext={playback.index < tracks.length - 1}
               onEnded={() => {
                 const current = playbackRef.current;
-                if (current) void playNext(current.index);
+                if (current) void skipFrom(current.index, 1, true);
+              }}
+              onPrev={() => {
+                const current = playbackRef.current;
+                if (current) void skipFrom(current.index, -1, false);
+              }}
+              onNext={() => {
+                const current = playbackRef.current;
+                if (current) void skipFrom(current.index, 1, false);
               }}
               onPaused={() => setPlayback((current) => (current ? { ...current, paused: true } : current))}
               onPlaying={() => setPlayback((current) => (current ? { ...current, paused: false } : current))}

@@ -41,7 +41,23 @@ export async function search(q: string): Promise<SearchHit[]> {
     fulltext("labelSearch", lucene, "label"),
     fulltext("releaseSearch", lucene, "release"),
   ]);
-  return [...artists, ...labels, ...releases].sort((a, b) => b.rank - a.rank).slice(0, 12).map(({ rank: _rank, ...hit }) => hit);
+  const needle = term.toLowerCase();
+  const pools = { artist: artists, label: labels, release: releases };
+  const exact = (hit: { name: string }) => hit.name.trim().toLowerCase() === needle;
+  const pinned = (["artist", "label", "release"] as const).flatMap((type) => {
+    const matches = pools[type].filter(exact).sort((a, b) => b.rank - a.rank);
+    return type === "artist" ? matches : matches.slice(0, 1);
+  });
+  const seen = new Set(pinned.map((hit) => `${hit.type}:${hit.id}`));
+  const rest = (["artist", "label", "release"] as const)
+    .flatMap((type) =>
+      pools[type]
+        .filter((hit) => !seen.has(`${hit.type}:${hit.id}`))
+        .sort((a, b) => b.rank - a.rank)
+        .slice(0, 8),
+    )
+    .sort((a, b) => b.rank - a.rank);
+  return [...pinned, ...rest].slice(0, 12).map(({ rank: _rank, ...hit }) => hit);
 }
 
 export async function related(seeds: Seed[], target: EntityType, limit = 25): Promise<RelatedRow[]> {
@@ -551,7 +567,7 @@ async function fulltext(index: string, q: string, type: EntityType): Promise<Arr
      RETURN ${name} AS name, node.discogsId AS id, node.thumbUrl AS thumbUrl, node.realname AS realname,
             node.year AS year, node.country AS country, score${releaseFields}
      ORDER BY score DESC
-     LIMIT ${type === "release" ? 40 : 8}`,
+     LIMIT 40`,
     { index, q },
   );
   const hits = records.map((record) => ({
@@ -573,7 +589,6 @@ async function fulltext(index: string, q: string, type: EntityType): Promise<Arr
   }
   return [...best.values()]
     .sort((a, b) => b.rank - a.rank)
-    .slice(0, 8)
     .map(({ masterId: _masterId, main: _main, ...hit }) => hit);
 }
 
@@ -664,8 +679,15 @@ function parseJson<T>(value: unknown, fallback: T): T {
 }
 
 function toLucene(q: string): string {
-  const escaped = q.replace(/[+\-&|!(){}[\]^"~*?:\\/]/g, "\\$&");
-  return q.includes(" ") ? `"${escaped}"` : `${escaped}*`;
+  const tokens = q.trim().split(/\s+/).filter(Boolean);
+  return tokens
+    .map((token, index) => {
+      const escaped = token.replace(/[+\-&|!(){}[\]^"~*?:\\/]/g, "\\$&");
+      // The bare term keeps Lucene's relevance score. A prefix alone is a constant score, so exact names tie with longer ones and fall off the limit.
+      const term = index === tokens.length - 1 ? `(${escaped} OR ${escaped}*)` : escaped;
+      return `+${term}`;
+    })
+    .join(" ");
 }
 
 async function run(query: string, params: Record<string, unknown> = {}): Promise<NeoRecord[]> {

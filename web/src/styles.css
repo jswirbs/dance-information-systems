@@ -182,8 +182,60 @@ main {
 }
 .rows .play-toggle:disabled { opacity: 0.4; cursor: default; }
 .play-toggle svg { width: 14px; height: 14px; fill: currentColor; display: block; }
-.path-player { margin-top: 8px; border: 1px solid #000; }
-.path-player iframe, .path-player > div { display: block; width: 100%; aspect-ratio: 16 / 9; border: 0; }
+.path-player { margin-top: 8px; display: grid; gap: 6px; }
+.path-player-frame {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 1px solid #000;
+  overflow: hidden;
+}
+.path-player-frame iframe,
+.path-player-frame > div {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+.path-transport {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border: 1px solid #000;
+  background: #fff;
+}
+.path-transport button {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: none;
+  flex: none;
+  cursor: pointer;
+}
+.path-transport button:disabled { opacity: 0.35; cursor: default; }
+.path-transport svg { width: 14px; height: 14px; fill: currentColor; display: block; }
+.path-scrub {
+  flex: 1;
+  min-width: 0;
+  height: 6px;
+  background: rgba(0, 0, 0, 0.2);
+  cursor: pointer;
+}
+.path-scrub-played { display: block; height: 100%; background: #000; }
+.path-time {
+  flex: none;
+  width: 13ch;
+  font-size: 0.8em;
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum";
+  text-align: right;
+  white-space: nowrap;
+}
 
 .thumb {
   width: 36px;
@@ -212,6 +264,23 @@ main {
 .detail-head { display: flex; gap: 12px; align-items: flex-start; }
 .detail-copy { display: grid; gap: 4px; min-width: 0; line-height: 1.35; }
 .detail-actions { margin: 0; }
+.external-link {
+  text-decoration: none;
+}
+.detail-actions .external-link { white-space: nowrap; }
+.external-link > span { text-decoration: underline; }
+.external-link svg {
+  display: inline-block;
+  width: 0.85em;
+  height: 0.85em;
+  margin-left: 0.2em;
+  vertical-align: -0.1em;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .aka-wrap { position: relative; }
 .aka-measure {
   position: absolute;

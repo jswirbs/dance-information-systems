@@ -275,6 +275,7 @@ export function App() {
               onSelect={(type, id) => void openDetail(type, id)}
               emptyMessage={pathEmpty}
               showNodeCap={false}
+              layout="path"
             />
           )}
           <p className="map-note">

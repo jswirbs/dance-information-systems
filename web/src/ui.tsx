@@ -220,9 +220,9 @@ export function Detail({
                 {" · "}
               </>
             )}
-            <a className="text-button" href={discogsHref(record.type, record.id)} target="_blank" rel="noreferrer">
+            <ExternalLink className="text-button" href={discogsHref(record.type, record.id)}>
               Discogs
-            </a>
+            </ExternalLink>
           </p>
         </div>
       </div>
@@ -262,11 +262,30 @@ export function Detail({
         <ul className="urls">
           {record.urls.map((url) => (
             <li key={url}>
-              <a href={url}>{url}</a>
+              <ExternalLink href={url}>{url}</ExternalLink>
             </li>
           ))}
         </ul>
       )}
     </article>
+  );
+}
+
+function ExternalLink({ href, className, children }: { href: string; className?: string; children: ReactNode }) {
+  return (
+    <a className={className ? `external-link ${className}` : "external-link"} href={href} target="_blank" rel="noreferrer">
+      <span>{children}</span>
+      <ExternalLinkIcon />
+    </a>
+  );
+}
+
+function ExternalLinkIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M15 3h6v6" />
+      <path d="M10 14 21 3" />
+      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+    </svg>
   );
 }

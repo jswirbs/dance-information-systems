@@ -22,6 +22,8 @@ pnpm dev:web
 
 Leave the Neo4j and API terminals open. `.env` points the API at `bolt://localhost:7687`.
 
+Path finder playlist search uses **yt-dlp** (`ytsearch1:`) when a release has no Discogs YouTube URL. Install once with `brew install yt-dlp`; if search starts failing, `brew upgrade yt-dlp`. Hits are cached in `.cache/youtube-search.json`. Personal/local use only.
+
 `pnpm explore Workshop` is optional: a CLI print of the same related lists, not a required start step.
 
 ## Docker (empty database)
