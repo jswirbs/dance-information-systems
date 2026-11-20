@@ -31,8 +31,9 @@ app.post("/api/path", async (c) => {
   const kind = parsePathKind(body?.kind);
   if (!stops || !kind) return c.json({ error: "stops and kind are required" }, 400);
   const seed = Number.isFinite(Number(body?.seed)) ? Math.round(Number(body.seed)) : Date.now();
+  const avoid = typeof body?.avoid === "string" && body.avoid.length > 0 && body.avoid.length <= 2000 ? body.avoid : undefined;
   try {
-    return c.json(await catalogPath(stops, kind, seed));
+    return c.json(await catalogPath(stops, kind, seed, avoid));
   } catch (error) {
     if (error instanceof PathRequestError) return c.json({ error: error.code }, 400);
     throw error;

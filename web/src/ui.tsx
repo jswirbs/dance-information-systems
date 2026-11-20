@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import type { AliasRef, EntityDetail, EntityType } from "../../src/shared/types";
+import type { AliasRef, Credit, EntityDetail, EntityType, IssuedLabel } from "../../src/shared/types";
+import { ReleaseTracks } from "./ReleaseTracks";
 
 export function ScrollList({ count, children }: { count: number; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -79,7 +80,6 @@ function AliasList({ aliases, onPick }: { aliases: AliasRef[]; onPick: (id: numb
     <div className="aka-wrap">
       {!expanded && (
         <div className="aka aka-measure" ref={measureRef} aria-hidden="true">
-          {"Also known as "}
           {aliases.map((alias, index) => (
             <Fragment key={alias.id}>
               {index > 0 ? " " : null}
@@ -93,7 +93,6 @@ function AliasList({ aliases, onPick }: { aliases: AliasRef[]; onPick: (id: numb
         </div>
       )}
       <div className="aka">
-        {"Also known as "}
         {shown.map((alias, index) => (
           <Fragment key={alias.id}>
             {index > 0 ? " " : null}
@@ -162,8 +161,82 @@ function lineTops(tokens: HTMLElement[]): number[] {
   return tops;
 }
 
+const MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+
 function discogsHref(type: EntityType, id: number): string {
   return `https://www.discogs.com/${type}/${id}`;
+}
+
+function plural(word: string, count: number): string {
+  if (count === 1) return word;
+  return word.endsWith("s") ? `${word}es` : `${word}s`;
+}
+
+function mainArtists(record: EntityDetail): Credit[] {
+  return record.credits.filter((credit) => credit.scope === "release" && credit.role === "Main" && (credit.anv || credit.name));
+}
+
+function formatReleased(released: string | null, year: number | null): string | null {
+  const value = released?.trim();
+  if (value) {
+    const match = /^(\d{4})(?:-(\d{2}))?(?:-(\d{2}))?/.exec(value);
+    if (!match) return value;
+    const yearText = match[1] ?? "";
+    const month = match[2] && match[2] !== "00" ? Number(match[2]) : 0;
+    const day = match[3] && match[3] !== "00" ? Number(match[3]) : 0;
+    const monthName = month >= 1 && month <= 12 ? MONTHS[month - 1] : null;
+    if (monthName && day >= 1 && day <= 31) return `${monthName} ${day}, ${yearText}`;
+    if (monthName) return `${monthName} ${yearText}`;
+    return yearText;
+  }
+  return year ? String(year) : null;
+}
+
+function FactNames({
+  items,
+  onPick,
+}: {
+  items: { key: string; id: number; label: string; note?: string | null }[];
+  onPick: (id: number) => void;
+}) {
+  return items.map((item, index) => (
+    <Fragment key={item.key}>
+      {index > 0 ? " " : null}
+      <span className="name-with-comma">
+        {item.id > 0 ? (
+          <button type="button" className="text-button" onClick={() => onPick(item.id)}>
+            {item.label}
+          </button>
+        ) : (
+          item.label
+        )}
+        {item.note ? ` · ${item.note}` : ""}
+        {index < items.length - 1 ? "," : null}
+      </span>
+    </Fragment>
+  ));
+}
+
+function labelItems(labels: IssuedLabel[]) {
+  return labels.map((label, index) => ({
+    key: `${label.id}-${label.catno ?? ""}-${index}`,
+    id: label.id,
+    label: label.name,
+    note: label.catno,
+  }));
 }
 
 export function Thumb({ url, name, type }: { url: string | null; name: string; type: EntityType }) {
@@ -184,6 +257,56 @@ export function Detail({
 }) {
   const blurb = record.profile || record.notes;
   const image = record.imageUrl || record.thumbUrl;
+  const artists = record.type === "release" ? mainArtists(record) : [];
+  const released = formatReleased(record.released, record.year);
+  const facts: { key: string; value: ReactNode; wide?: boolean }[] = [];
+  if (record.realname) facts.push({ key: "Real name", value: record.realname });
+  if (record.aliases.length > 0) {
+    facts.push({
+      key: plural("Alias", record.aliases.length),
+      wide: true,
+      value: <AliasList key={`${record.type}:${record.id}`} aliases={record.aliases} onPick={(id) => onOpen("artist", id)} />,
+    });
+  }
+  if (record.parent) {
+    const parent = record.parent;
+    facts.push({
+      key: "Parent",
+      value: (
+        <button type="button" className="text-button" onClick={() => onOpen("label", parent.id)}>
+          {parent.name}
+        </button>
+      ),
+    });
+  }
+  if (artists.length > 0) {
+    facts.push({
+      key: plural("Artist", artists.length),
+      value: (
+        <FactNames
+          items={artists.map((artist, index) => ({
+            key: `${artist.id}-${index}`,
+            id: artist.id,
+            label: artist.anv || artist.name,
+          }))}
+          onPick={(id) => onOpen("artist", id)}
+        />
+      ),
+    });
+  }
+  if (record.labels.length > 0) {
+    facts.push({
+      key: plural("Label", record.labels.length),
+      value: <FactNames items={labelItems(record.labels)} onPick={(id) => onOpen("label", id)} />,
+    });
+  }
+  if (released) facts.push({ key: "Released", value: released });
+  if (record.country) facts.push({ key: "Country", value: record.country });
+  if (record.formatSummary.length > 0) {
+    facts.push({ key: plural("Format", record.formatSummary.length), value: record.formatSummary.join(", ") });
+  }
+  if (record.genres.length > 0) facts.push({ key: plural("Genre", record.genres.length), value: record.genres.join(", ") });
+  if (record.styles.length > 0) facts.push({ key: plural("Style", record.styles.length), value: record.styles.join(", ") });
   return (
     <article className="detail">
       <div className="detail-head">
@@ -191,26 +314,6 @@ export function Detail({
         <div className="detail-copy">
           <p className="eyebrow">{record.type}</p>
           <h2>{record.name}</h2>
-          {record.realname && <p>{record.realname}</p>}
-          {record.aliases.length > 0 && (
-            <AliasList key={`${record.type}:${record.id}`} aliases={record.aliases} onPick={(id) => onOpen("artist", id)} />
-          )}
-          {record.labels.length > 0 && (
-            <p>
-              {record.labels.map((label, index) => (
-                <Fragment key={`${label.id}-${label.catno ?? ""}-${index}`}>
-                  {index > 0 ? " " : null}
-                  <span className="name-with-comma">
-                    <button type="button" className="text-button" onClick={() => onOpen("label", label.id)}>
-                      {label.name}
-                    </button>
-                    {label.catno ? ` · ${label.catno}` : ""}
-                    {index < record.labels.length - 1 ? "," : null}
-                  </span>
-                </Fragment>
-              ))}
-            </p>
-          )}
           <p className="detail-actions">
             {useLabel && (
               <>
@@ -226,37 +329,21 @@ export function Detail({
           </p>
         </div>
       </div>
-      {(record.genres.length > 0 || record.styles.length > 0) && (
-        <p className="tags">{[...record.genres, ...record.styles].join(" · ")}</p>
-      )}
-      {record.year && (
-        <p>
-          {record.year}
-          {record.country ? ` · ${record.country}` : ""}
-        </p>
-      )}
-      {blurb && <p className="blurb">{blurb}</p>}
-      {record.tracklist.length > 0 && (
-        <ol className="tracks">
-          {record.tracklist.map((track) => (
-            <li key={`${track.position}-${track.title}`}>
-              <span className="track-pos">{track.position}</span>
-              <span className="track-main">
-                <NameButtons
-                  items={track.artists.map((artist, index) => ({
-                    key: `${artist.id}-${index}`,
-                    id: artist.id,
-                    label: artist.anv || artist.name,
-                  }))}
-                  onPick={(id) => onOpen("artist", id)}
-                />
-                {track.artists.length > 0 ? " – " : ""}
-                {track.title}
-              </span>
-              {track.duration ? <span className="track-time">{track.duration}</span> : null}
-            </li>
-          ))}
-        </ol>
+      {(facts.length > 0 || blurb || record.tracklist.length > 0) && (
+        <div className="detail-body">
+          {facts.length > 0 && (
+            <ul className="facts">
+              {facts.map((fact) => (
+                <li key={fact.key} className={fact.wide ? "fact-wide" : undefined}>
+                  <span className="fact-key">{fact.key}:</span>
+                  {fact.wide ? <span className="fact-value">{fact.value}</span> : <> {fact.value}</>}
+                </li>
+              ))}
+            </ul>
+          )}
+          {blurb && <p className="blurb">{blurb}</p>}
+          {record.tracklist.length > 0 && <ReleaseTracks record={record} onOpen={onOpen} />}
+        </div>
       )}
       {record.urls.length > 0 && (
         <ul className="urls">

@@ -25,6 +25,7 @@ export type RelatedRow = {
   score: number;
   reason: string;
   reasons: ReasonPiece[];
+  scoreNote: string;
   thumbUrl: string | null;
   year: number | null;
   country: string | null;
@@ -38,6 +39,7 @@ export type GraphNode = {
   discogsId: number;
   name: string;
   seed: boolean;
+  year?: number | null;
 };
 
 export type GraphLinkKind =
@@ -86,6 +88,9 @@ export type PathPayload = {
   rows: RelatedRow[];
   tracks: PathTrack[];
   fallback?: "shortest";
+  // Set when a regenerate was asked to avoid the route already on screen and
+  // every attempt came back as that same walk.
+  unchanged?: boolean;
 };
 
 export type Credit = {
@@ -168,6 +173,7 @@ export type EntityDetail = {
   masterId: number | null;
   isMainRelease: boolean | null;
   aliases: AliasRef[];
+  parent: AliasRef | null;
   labels: IssuedLabel[];
   creditedArtists: CreditedArtist[];
 };

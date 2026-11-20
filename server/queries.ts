@@ -9,6 +9,7 @@ import {
   type NameBridge,
   type ReasonInput,
   type ReleaseBridge,
+  type ScoreInput,
 } from "./reasons.js";
 
 export type DetailedRow = RelatedRow & {
@@ -123,7 +124,7 @@ export async function relatedDetailed(seeds: Seed[], target: EntityType, limit =
 
   return [...merged.values()]
     .map((row) => {
-      const { reason, reasons } = formatReasons(row.inputs);
+      const { reason, reasons, scoreNote } = formatReasons(row.inputs);
       return {
         type: row.type,
         id: row.id,
@@ -131,6 +132,7 @@ export async function relatedDetailed(seeds: Seed[], target: EntityType, limit =
         score: round(row.score),
         reason,
         reasons,
+        scoreNote,
         thumbUrl: row.thumbUrl,
         year: row.year,
         country: row.country,
@@ -193,6 +195,7 @@ async function similarLabels(id: number, seedName: string): Promise<Hit[]> {
     const hit = baseHit("label", record, num(record, "score"), {
       seedName,
       sharedArtists: bridges,
+      score: { kind: "roster", artistCount: bridges.length, artistPoints: num(record, "score"), family: null },
     });
     hit.bridges = bridges.map((bridge) => ({ type: "artist", id: bridge.id, name: bridge.name }));
     hits.set(hit.id, hit);
@@ -203,9 +206,21 @@ async function similarLabels(id: number, seedName: string): Promise<Hit[]> {
     const sublabel = { relation, otherName: seedName } as const;
     if (existing) {
       existing.score += 1.5;
-      existing.reason = { ...existing.reason, sublabel };
+      const current = existing.reason.score;
+      existing.reason = {
+        ...existing.reason,
+        sublabel,
+        score:
+          current?.kind === "roster"
+            ? { ...current, family: relation }
+            : { kind: "roster", artistCount: 0, artistPoints: 0, family: relation },
+      };
     } else {
-      const hit = baseHit("label", record, 1.5, { seedName, sublabel });
+      const hit = baseHit("label", record, 1.5, {
+        seedName,
+        sublabel,
+        score: { kind: "roster", artistCount: 0, artistPoints: 0, family: relation },
+      });
       hits.set(hit.id, hit);
     }
   }
@@ -232,7 +247,9 @@ async function similarArtists(id: number, seedName: string): Promise<Hit[]> {
           masters
      RETURN other.discogsId AS id, other.name AS name, other.thumbUrl AS thumbUrl,
             collect({id: l.discogsId, name: l.name, weight: masters}) AS bridges,
-            sum(points) AS score`,
+            sum(points) AS score,
+            sum(CASE WHEN points >= 1.0 THEN 1 ELSE 0 END) AS primaryLabels,
+            sum(CASE WHEN points < 1.0 THEN 1 ELSE 0 END) AS appearLabels`,
     { id },
   );
   const sharedReleases = await run(
@@ -254,7 +271,16 @@ async function similarArtists(id: number, seedName: string): Promise<Hit[]> {
   const hits = new Map<number, Hit>();
   for (const record of labels) {
     const bridges = nameBridges(record.get("bridges"));
-    const hit = baseHit("artist", record, num(record, "score"), { seedName, sharedLabels: bridges });
+    const hit = baseHit("artist", record, num(record, "score"), {
+      seedName,
+      sharedLabels: bridges,
+      score: {
+        kind: "catalog",
+        primaryLabels: num(record, "primaryLabels"),
+        appearLabels: num(record, "appearLabels"),
+        sharedReleases: 0,
+      },
+    });
     hit.bridges = bridges.map((bridge) => ({ type: "label", id: bridge.id, name: bridge.name }));
     hits.set(hit.id, hit);
   }
@@ -263,67 +289,207 @@ async function similarArtists(id: number, seedName: string): Promise<Hit[]> {
     const existing = hits.get(num(record, "id"));
     if (existing) {
       existing.score += num(record, "score");
-      existing.reason = { ...existing.reason, sharedReleases: releases };
+      const current = existing.reason.score;
+      existing.reason = {
+        ...existing.reason,
+        sharedReleases: releases,
+        score:
+          current?.kind === "catalog"
+            ? { ...current, sharedReleases: releases.length }
+            : { kind: "catalog", primaryLabels: 0, appearLabels: 0, sharedReleases: releases.length },
+      };
     } else {
-      const hit = baseHit("artist", record, num(record, "score"), { seedName, sharedReleases: releases });
+      const hit = baseHit("artist", record, num(record, "score"), {
+        seedName,
+        sharedReleases: releases,
+        score: { kind: "catalog", primaryLabels: 0, appearLabels: 0, sharedReleases: releases.length },
+      });
       hits.set(hit.id, hit);
     }
   }
   return [...hits.values()];
 }
 
+// Points: shared label 2, shared primary artist 4, shared track or remix artist 1 (cap 3),
+// shared style 1 (cap 3), and 1 when the years fall within three of each other.
+const RELEASE_STYLE_CAP = 3;
+const RELEASE_CREDIT_CAP = 3;
+const RELEASE_YEAR_WINDOW = 3;
+
 async function similarReleases(id: number, seedName: string): Promise<Hit[]> {
-  const byLabel = await run(
-    `MATCH (seed:Release {discogsId: $id})<-[:ISSUED]-(l:Label)
-     WHERE coalesce(l.denied, false) = false
-     MATCH (l)-[:ISSUED]->(other:Release)
-     WHERE other <> seed AND (coalesce(seed.masterId, 0) <= 0 OR coalesce(other.masterId, 0) <= 0 OR other.masterId <> seed.masterId)
-     WITH other, collect(DISTINCT {id: l.discogsId, name: l.name, weight: 1}) AS labels
-     ORDER BY coalesce(other.isMainRelease, false) DESC, other.discogsId ASC
-     WITH CASE WHEN coalesce(other.masterId, 0) > 0 THEN 'master:' + toString(other.masterId) ELSE 'release:' + toString(other.discogsId) END AS masterKey,
-          collect(other) AS pressings, collect(labels) AS labelSets
-     WITH head(pressings) AS other, head(labelSets) AS labels
-     RETURN other.discogsId AS id, other.title AS name, other.thumbUrl AS thumbUrl,
-            other.year AS year, other.country AS country, other.genres AS genres, other.styles AS styles,
-            labels, toFloat(size(labels)) * 3.0 AS score`,
-    { id },
-  );
-  const byArtist = await run(
-    `MATCH (seed:Release {discogsId: $id})<-[:PRIMARY_ON]-(a:Artist)
-     WHERE coalesce(a.bridge, false) = false
-     MATCH (a)-[:PRIMARY_ON]->(other:Release)
-     WHERE other <> seed AND (coalesce(seed.masterId, 0) <= 0 OR coalesce(other.masterId, 0) <= 0 OR other.masterId <> seed.masterId)
-     WITH other, collect(DISTINCT {id: a.discogsId, name: a.name, weight: 1}) AS artists
-     ORDER BY coalesce(other.isMainRelease, false) DESC, other.discogsId ASC
-     WITH CASE WHEN coalesce(other.masterId, 0) > 0 THEN 'master:' + toString(other.masterId) ELSE 'release:' + toString(other.discogsId) END AS masterKey,
-          collect(other) AS pressings, collect(artists) AS artistSets
-     WITH head(pressings) AS other, head(artistSets) AS artists
-     RETURN other.discogsId AS id, other.title AS name, other.thumbUrl AS thumbUrl,
-            other.year AS year, other.country AS country, other.genres AS genres, other.styles AS styles,
-            artists, toFloat(size(artists)) * 2.0 AS score`,
-    { id },
-  );
+  const [seed, byLabel, byArtist, byCredit] = await Promise.all([
+    releaseFacts(id),
+    run(
+      `MATCH (seed:Release {discogsId: $id})<-[:ISSUED]-(l:Label)
+       WHERE coalesce(l.denied, false) = false
+       MATCH (l)-[:ISSUED]->(other:Release)
+       WHERE other <> seed AND (coalesce(seed.masterId, 0) <= 0 OR coalesce(other.masterId, 0) <= 0 OR other.masterId <> seed.masterId)
+       WITH other, collect(DISTINCT {id: l.discogsId, name: l.name, weight: 1}) AS labels
+       ORDER BY coalesce(other.isMainRelease, false) DESC, other.discogsId ASC
+       WITH CASE WHEN coalesce(other.masterId, 0) > 0 THEN 'master:' + toString(other.masterId) ELSE 'release:' + toString(other.discogsId) END AS masterKey,
+            collect(other) AS pressings, collect(labels) AS labelSets
+       WITH head(pressings) AS other, head(labelSets) AS labels
+       RETURN other.discogsId AS id, other.title AS name, other.thumbUrl AS thumbUrl,
+              other.year AS year, other.country AS country, other.genres AS genres, other.styles AS styles,
+              labels, toFloat(size(labels)) * 2.0 AS score`,
+      { id },
+    ),
+    run(
+      `MATCH (seed:Release {discogsId: $id})<-[:PRIMARY_ON]-(a:Artist)
+       WHERE coalesce(a.bridge, false) = false
+       MATCH (a)-[:PRIMARY_ON]->(other:Release)
+       WHERE other <> seed AND (coalesce(seed.masterId, 0) <= 0 OR coalesce(other.masterId, 0) <= 0 OR other.masterId <> seed.masterId)
+       WITH other, collect(DISTINCT {id: a.discogsId, name: a.name, weight: 1}) AS artists
+       ORDER BY coalesce(other.isMainRelease, false) DESC, other.discogsId ASC
+       WITH CASE WHEN coalesce(other.masterId, 0) > 0 THEN 'master:' + toString(other.masterId) ELSE 'release:' + toString(other.discogsId) END AS masterKey,
+            collect(other) AS pressings, collect(artists) AS artistSets
+       WITH head(pressings) AS other, head(artistSets) AS artists
+       RETURN other.discogsId AS id, other.title AS name, other.thumbUrl AS thumbUrl,
+              other.year AS year, other.country AS country, other.genres AS genres, other.styles AS styles,
+              artists, toFloat(size(artists)) * 4.0 AS score`,
+      { id },
+    ),
+    // Degree weight only decides which credit-neighbors fit in the window. Points are the capped artist count.
+    run(
+      `MATCH (seed:Release {discogsId: $id})<-[:APPEARS_ON|REMIXED]-(a:Artist)
+       WHERE coalesce(a.bridge, false) = false AND NOT (a)-[:PRIMARY_ON]->(seed)
+       MATCH (a)-[:APPEARS_ON|PRIMARY_ON|REMIXED]->(credited:Release)
+       WITH seed, a, count(DISTINCT CASE WHEN coalesce(credited.masterId, 0) > 0 THEN credited.masterId ELSE credited.discogsId END) AS degree
+       WITH seed, a, 1.0 / log(2.0 + toFloat(degree)) AS weight
+       MATCH (a)-[:APPEARS_ON|PRIMARY_ON|REMIXED]->(other:Release)
+       WHERE other <> seed AND (coalesce(seed.masterId, 0) <= 0 OR coalesce(other.masterId, 0) <= 0 OR other.masterId <> seed.masterId)
+       WITH seed, other, a, head(collect(weight)) AS weight
+       WITH seed, other, collect({id: a.discogsId, name: a.name, weight: weight}) AS artists, sum(weight) AS rank
+       WITH other, artists, rank,
+            size([style IN coalesce(seed.styles, []) WHERE style IN coalesce(other.styles, [])]) AS styleOverlap,
+            CASE WHEN seed.year IS NULL OR other.year IS NULL OR abs(seed.year - other.year) > 3 THEN 0 ELSE 1 END AS yearClose
+       ORDER BY rank + toFloat(styleOverlap) DESC, yearClose DESC, coalesce(other.isMainRelease, false) DESC, other.discogsId ASC
+       WITH CASE WHEN coalesce(other.masterId, 0) > 0 THEN 'master:' + toString(other.masterId) ELSE 'release:' + toString(other.discogsId) END AS masterKey,
+            collect(other) AS pressings, collect(artists) AS artistSets, collect(rank + toFloat(styleOverlap)) AS ranks
+       WITH head(pressings) AS other, head(artistSets) AS artists, head(ranks) AS rank
+       ORDER BY rank DESC
+       LIMIT 40
+       RETURN other.discogsId AS id, other.title AS name, other.thumbUrl AS thumbUrl,
+              other.year AS year, other.country AS country, other.genres AS genres, other.styles AS styles,
+              artists`,
+      { id },
+    ),
+  ]);
+
   const hits = new Map<number, Hit>();
   for (const record of byLabel) {
     const labels = nameBridges(record.get("labels"));
-    const hit = releaseHit(record, num(record, "score"), { seedName, sameLabels: labels.map((label) => label.name) });
+    const hit = releaseHit(record, num(record, "score"), {
+      seedName,
+      sameLabels: labels.map((label) => label.name),
+      score: releaseScore({ labels: labels.length }),
+    });
     hit.bridges = labels.map((label) => ({ type: "label", id: label.id, name: label.name }));
-    hits.set(hit.id, hit);
+    rememberRelease(hits, hit);
   }
   for (const record of byArtist) {
     const artists = nameBridges(record.get("artists"));
-    const existing = hits.get(num(record, "id"));
-    if (existing) {
-      existing.score += num(record, "score");
-      existing.reason = { ...existing.reason, sameArtists: artists.map((artist) => artist.name) };
-      existing.bridges.push(...artists.map((artist) => ({ type: "artist" as const, id: artist.id, name: artist.name })));
-    } else {
-      const hit = releaseHit(record, num(record, "score"), { seedName, sameArtists: artists.map((artist) => artist.name) });
-      hit.bridges = artists.map((artist) => ({ type: "artist", id: artist.id, name: artist.name }));
-      hits.set(hit.id, hit);
-    }
+    const hit = releaseHit(record, num(record, "score"), {
+      seedName,
+      sameArtists: artists.map((artist) => artist.name),
+      score: releaseScore({ primaryArtists: artists.length }),
+    });
+    hit.bridges = artists.map((artist) => ({ type: "artist" as const, id: artist.id, name: artist.name }));
+    rememberRelease(hits, hit);
   }
+  for (const record of byCredit) {
+    const artists = nameBridges(record.get("artists"));
+    if (artists.length === 0) continue;
+    const hit = releaseHit(record, Math.min(artists.length, RELEASE_CREDIT_CAP), {
+      seedName,
+      sameArtists: artists.map((artist) => artist.name),
+      score: releaseScore({ creditPoints: Math.min(artists.length, RELEASE_CREDIT_CAP) }),
+    });
+    rememberRelease(hits, hit);
+  }
+  for (const hit of hits.values()) applyReleaseAffinity(hit, seed);
   return [...hits.values()];
+}
+
+async function releaseFacts(id: number): Promise<{ styles: string[]; year: number | null }> {
+  const records = await run(`MATCH (seed:Release {discogsId: $id}) RETURN seed.styles AS styles, seed.year AS year`, { id });
+  const record = records[0];
+  if (!record) return { styles: [], year: null };
+  return { styles: asStrings(record.get("styles")), year: numOrNull(record, "year") };
+}
+
+function rememberRelease(hits: Map<number, Hit>, hit: Hit) {
+  const existing = hits.get(hit.id);
+  if (!existing) {
+    hits.set(hit.id, hit);
+    return;
+  }
+  existing.score += hit.score;
+  existing.bridges.push(...hit.bridges);
+  existing.reason = {
+    ...existing.reason,
+    sameLabels: mergeNames(existing.reason.sameLabels, hit.reason.sameLabels),
+    sameArtists: mergeNames(existing.reason.sameArtists, hit.reason.sameArtists),
+    score: combineReleaseScore(existing.reason.score, hit.reason.score),
+  };
+}
+
+function applyReleaseAffinity(hit: Hit, seed: { styles: string[]; year: number | null }) {
+  const shared = sharedNames(seed.styles, hit.styles);
+  const stylePoints = Math.min(shared.length, RELEASE_STYLE_CAP);
+  const yearClose = seed.year != null && hit.year != null && Math.abs(seed.year - hit.year) <= RELEASE_YEAR_WINDOW;
+  if (shared.length > 0) {
+    hit.score += stylePoints;
+    hit.reason = { ...hit.reason, sharedStyles: shared };
+  }
+  if (yearClose) hit.score += 1;
+  if (stylePoints > 0 || yearClose) {
+    const base = hit.reason.score?.kind === "release" ? hit.reason.score : releaseScore();
+    hit.reason = { ...hit.reason, score: { ...base, styles: base.styles + stylePoints, yearClose: base.yearClose || yearClose } };
+  }
+}
+
+function releaseScore(
+  part: Partial<Omit<Extract<ScoreInput, { kind: "release" }>, "kind">> = {},
+): Extract<ScoreInput, { kind: "release" }> {
+  return { kind: "release", labels: 0, primaryArtists: 0, creditPoints: 0, styles: 0, yearClose: false, ...part };
+}
+
+function combineReleaseScore(current: ScoreInput | undefined, extra: ScoreInput | undefined): ScoreInput | undefined {
+  if (!extra || extra.kind !== "release") return current;
+  if (!current || current.kind !== "release") return extra;
+  return {
+    kind: "release",
+    labels: current.labels + extra.labels,
+    primaryArtists: current.primaryArtists + extra.primaryArtists,
+    creditPoints: current.creditPoints + extra.creditPoints,
+    styles: current.styles + extra.styles,
+    yearClose: current.yearClose || extra.yearClose,
+  };
+}
+
+function sharedNames(left: string[], right: string[]): string[] {
+  const have = new Set(right);
+  const seen = new Set<string>();
+  const names: string[] = [];
+  for (const name of left) {
+    if (!have.has(name) || seen.has(name)) continue;
+    seen.add(name);
+    names.push(name);
+  }
+  return names;
+}
+
+function mergeNames(current: string[] | undefined, extra: string[] | undefined): string[] | undefined {
+  if (!extra || extra.length === 0) return current;
+  const names = [...(current ?? [])];
+  const seen = new Set(names);
+  for (const name of extra) {
+    if (!name || seen.has(name)) continue;
+    seen.add(name);
+    names.push(name);
+  }
+  return names;
 }
 
 async function artistsOnLabel(id: number, seedName: string): Promise<Hit[]> {
@@ -340,6 +506,7 @@ async function artistsOnLabel(id: number, seedName: string): Promise<Hit[]> {
     return baseHit("artist", record, count, {
       seedName,
       direct: releaseSpan(count, numOrNull(record, "fromYear"), numOrNull(record, "toYear"), true),
+      score: { kind: "releases", count, onLabel: true },
     });
   });
 }
@@ -387,6 +554,7 @@ async function labelsForArtist(id: number, seedName: string): Promise<Hit[]> {
     return baseHit("label", record, count, {
       seedName,
       direct: releaseSpan(count, numOrNull(record, "fromYear"), numOrNull(record, "toYear"), false),
+      score: { kind: "releases", count, onLabel: false },
     });
   });
 }
@@ -434,6 +602,7 @@ async function artistsOnRelease(id: number, seedName: string): Promise<Hit[]> {
     baseHit("artist", record, 1, {
       seedName,
       direct: creditSentence(asStrings(record.get("roles")), Boolean(record.get("compilation"))),
+      score: { kind: "credit" },
     }),
   );
 }
@@ -448,6 +617,7 @@ async function labelsOnRelease(id: number, seedName: string): Promise<Hit[]> {
     baseHit("label", record, 1, {
       seedName,
       direct: catalogLine(asString(record.get("catno")), numOrNull(record, "year")),
+      score: { kind: "issued" },
     }),
   );
 }
@@ -487,6 +657,7 @@ export async function entityDetail(type: EntityType, id: number): Promise<Entity
     masterId: asNumber(props.masterId),
     isMainRelease: props.isMainRelease == null ? null : Boolean(props.isMainRelease),
     aliases: type === "artist" ? await artistAliases(id) : [],
+    parent: type === "label" ? await labelParent(id) : null,
     labels: type === "release" ? await releaseLabels(id) : [],
     creditedArtists: [],
   };
@@ -528,6 +699,22 @@ function catalogNumber(value: string | null): string | null {
   const trimmed = value.trim();
   if (!trimmed || trimmed.toLowerCase() === "none") return null;
   return trimmed;
+}
+
+async function labelParent(id: number): Promise<{ id: number; name: string } | null> {
+  const records = await run(
+    `MATCH (:Label {discogsId: $id})-[:SUBLABEL_OF]->(parent:Label)
+     RETURN parent.discogsId AS id, parent.name AS name
+     ORDER BY parent.name
+     LIMIT 1`,
+    { id },
+  );
+  const record = records[0];
+  if (!record) return null;
+  const parentId = num(record, "id");
+  const name = String(record.get("name") ?? "");
+  if (parentId <= 0 || name.length === 0) return null;
+  return { id: parentId, name };
 }
 
 async function artistAliases(id: number): Promise<Array<{ id: number; name: string }>> {

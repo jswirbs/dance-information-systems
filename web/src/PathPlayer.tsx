@@ -58,11 +58,12 @@ function youtubeApi(): Promise<YTNamespace> {
   return apiPromise;
 }
 
-export function PathPlayer({
+export function YouTubePlayer({
   videoId,
   paused,
   canPrev,
   canNext,
+  frameHidden = false,
   onEnded,
   onPrev,
   onNext,
@@ -73,6 +74,7 @@ export function PathPlayer({
   paused: boolean;
   canPrev: boolean;
   canNext: boolean;
+  frameHidden?: boolean;
   onEnded: () => void;
   onPrev: () => void;
   onNext: () => void;
@@ -218,7 +220,7 @@ export function PathPlayer({
 
   return (
     <div className="path-player">
-      <div className="path-player-frame">
+      <div className={`path-player-frame${frameHidden ? " is-hidden" : ""}`}>
         <div ref={hostRef} />
       </div>
       <div className="path-transport">
@@ -265,7 +267,9 @@ function formatTime(seconds: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-function PlayIcon() {
+export const PathPlayer = YouTubePlayer;
+
+export function PlayIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <polygon points="8,5 20,12 8,19" />
@@ -273,7 +277,7 @@ function PlayIcon() {
   );
 }
 
-function PauseIcon() {
+export function PauseIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">
       <rect x="6" y="5" width="4" height="14" />

@@ -1,3 +1,4 @@
+import { forceCollide, forceRadial, forceX } from "d3-force";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D, { type ForceGraphMethods } from "react-force-graph-2d";
 import { MAX_NODE_CAP, MIN_NODE_CAP } from "../../src/shared/constants";
@@ -15,13 +16,21 @@ type SimLink = {
 
 type SimGraph = { nodes: DrawNode[]; links: SimLink[] };
 type PlainGraph = { nodes: GraphNode[]; links: GraphLink[] };
+type ExploreLayout = "proximity" | "columns" | "rings";
+type GraphLayout = ExploreLayout | "path";
+type Strength = number | ((...args: never[]) => number);
 
 type NodeMenu = {
   id: string;
   name: string;
+  seed: boolean;
+  entityType: EntityType;
+  discogsId: number;
   left: number;
   top: number;
 };
+
+type Box = { x: number; y: number; w: number; h: number };
 
 const COLOR: Record<string, string> = {
   artist: "#8c3d2f",
@@ -30,12 +39,27 @@ const COLOR: Record<string, string> = {
 };
 
 const TYPES: EntityType[] = ["artist", "label", "release"];
+const COLUMN_ORDER: EntityType[] = ["artist", "release", "label"];
+const EXPLORE_LAYOUTS: ExploreLayout[] = ["proximity", "columns", "rings"];
+const LAYOUT_LABEL: Record<ExploreLayout, string> = { proximity: "Proximity", columns: "Columns", rings: "Rings" };
 const FOCUS_ZOOM = 2.4;
 const PATH_STEP = 150;
 const PATH_STAGGER = 36;
+const PATH_JITTER_X = 20;
+const PATH_JITTER_Y = 32;
 const PATH_CHAR_WIDTH = 6.4;
-
-type GraphLayout = "force" | "path";
+const COLUMN_GAP = 320;
+const COLUMN_ROW = 24;
+const RING_ORDER: EntityType[] = ["artist", "label", "release"];
+const RING_GAP = 175;
+// Sibling spacing along a ring. Just past the collide diameter, so a fan stays put.
+const RING_NODE_GAP = 32;
+const DIM_ALPHA = 0.14;
+const SELECTED_DIM_ALPHA = 0.32;
+const LABEL_FONT = 11;
+const LAYOUT_KEY = "graph-explore-layout";
+const FADE_TAU = 110;
+const FADE_SNAP = 0.02;
 
 export function GraphView({
   payload,
@@ -43,18 +67,26 @@ export function GraphView({
   nodeCap,
   onNodeCapChange,
   onSelect,
+  onToggleSeed,
+  onExploreNode,
+  onStartPath,
   emptyMessage = "Add a seed to draw the neighborhood.",
   showNodeCap = true,
   layout = "force",
+  relatedType,
 }: {
   payload: GraphPayload | null;
   selectedId: string | null;
   nodeCap: number;
   onNodeCapChange: (value: number) => void;
   onSelect: (type: DrawNode["entityType"], id: number) => void;
+  onToggleSeed?: (node: { entityType: EntityType; discogsId: number; name: string; seed: boolean }) => void;
+  onExploreNode?: (node: { entityType: EntityType; discogsId: number; name: string }) => void;
+  onStartPath?: (node: { entityType: EntityType; discogsId: number; name: string }) => void;
   emptyMessage?: string;
   showNodeCap?: boolean;
-  layout?: GraphLayout;
+  layout?: "force" | "path";
+  relatedType?: EntityType;
 }) {
   const ref = useRef<ForceGraphMethods | undefined>(undefined);
   const frameRef = useRef<HTMLDivElement>(null);
@@ -64,28 +96,44 @@ export function GraphView({
   const [removed, setRemoved] = useState<string[]>([]);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [visible, setVisible] = useState<Record<EntityType, boolean>>({ artist: true, label: true, release: true });
+  const [exploreLayout, setExploreLayout] = useState<ExploreLayout>(readExploreLayout);
+  const [fading, setFading] = useState(false);
   const closeSettings = useCallback(() => setOpen(false), []);
   const closeMenu = useCallback(() => setMenu(null), []);
-  const graphStore = useRef<{ signature: string; layout: GraphLayout; data: SimGraph; cache: Map<string, DrawNode> }>({
+  const graphStore = useRef<{ signature: string; layout: string; data: SimGraph; cache: Map<string, DrawNode> }>({
     signature: "",
-    layout,
+    layout: "",
     data: { nodes: [], links: [] },
     cache: new Map(),
   });
   const focusedId = useRef<string | null>(null);
+  const labelIds = useRef<Set<string> | null>(null);
+  const hoverRef = useRef<string | null>(null);
+  const nodeAlpha = useRef(new Map<string, number>());
+  const linkAlpha = useRef(new Map<string, number>());
+  const fadeClock = useRef(0);
+  const fadingRef = useRef(false);
+  const activeLayout: GraphLayout = layout === "path" ? "path" : exploreLayout;
 
   const projected = useMemo(() => projectGraph(payload, removed, visible), [payload, removed, visible]);
   const data = useMemo(() => {
-    const signature = layout === "path" ? orderedSignature(projected) : graphSignature(projected);
+    const signature = activeLayout === "path" ? orderedSignature(projected) : graphSignature(projected);
     const store = graphStore.current;
-    if (signature === store.signature && store.layout === layout) return store.data;
+    const layoutChanged = store.layout !== activeLayout;
+    if (signature === store.signature && !layoutChanged) {
+      for (const node of projected.nodes) {
+        const cached = store.cache.get(node.id);
+        if (cached) cached.year = node.year ?? cached.year;
+      }
+      return store.data;
+    }
     // Keep the same node objects so x/y survive. A fresh object list makes the
     // force layout treat every node as new and fly in from the origin.
     store.signature = signature;
-    store.layout = layout;
-    store.data = adoptGraph(projected, store.cache, layout);
+    store.layout = activeLayout;
+    store.data = adoptGraph(projected, store.cache, activeLayout, layoutChanged, relatedType);
     return store.data;
-  }, [projected, layout]);
+  }, [projected, activeLayout, relatedType]);
 
   const ready = size.width > 0 && size.height > 0;
 
@@ -104,14 +152,42 @@ export function GraphView({
   }, []);
 
   useEffect(() => {
-    if (!ready || layout === "path") return;
-    const linkForce = ref.current?.d3Force("link") as { distance?: (fn: (link: GraphPayload["links"][number]) => number) => void } | undefined;
-    linkForce?.distance?.((link) => (link.kind === "SIMILAR" && link.score ? Math.max(40, 150 / link.score) : 46));
-    ref.current?.d3ReheatSimulation();
-  }, [data, ready, layout]);
+    if (!ready || activeLayout === "path") return;
+    const graph = ref.current;
+    if (!graph) return;
+    // Columns and rings are the same simulation with a positioning force.
+    // Link strength stays low so those forces can hold the shape.
+    const linkForce = asForce(graph.d3Force("link"));
+    const chargeForce = asForce(graph.d3Force("charge"));
+    linkForce?.distance?.((link) => linkDistance(link, activeLayout));
+    if (activeLayout === "columns") {
+      const targets = columnCenters(data.nodes);
+      writeStrength(linkForce, 0.12);
+      writeStrength(chargeForce, -16);
+      putForce(graph, "x", forceX<DrawNode>((node) => targets.get(node.entityType) ?? 0).strength(0.9));
+      putForce(graph, "radial", null);
+      putForce(graph, "collide", forceCollide<DrawNode>(14));
+    } else if (activeLayout === "rings") {
+      const radii = ringRadii(data.nodes, relatedType);
+      writeStrength(linkForce, 0.012);
+      writeStrength(chargeForce, -4);
+      putForce(graph, "radial", forceRadial<DrawNode>((node) => ringRadius(node, radii), 0, 0).strength(0.95));
+      putForce(graph, "x", null);
+      putForce(graph, "collide", forceCollide<DrawNode>(14));
+    } else {
+      // Similarity holds its rest length. Issued records and sublabels sit on their label; a credit only draws that clump toward the artist.
+      // Rest lengths are longer than the collide diameter, so this only breaks up a pile, such as many artists on one seed.
+      writeStrength(linkForce, ((link: SimLink) => proximityStrength(link)) as Strength);
+      writeStrength(chargeForce, -22);
+      putForce(graph, "x", null);
+      putForce(graph, "radial", null);
+      putForce(graph, "collide", forceCollide<DrawNode>(14));
+    }
+    graph.d3ReheatSimulation();
+  }, [data, ready, activeLayout, relatedType]);
 
   useEffect(() => {
-    if (layout === "path") return;
+    if (activeLayout !== "proximity") return;
     if (!selectedId) {
       focusedId.current = null;
       return;
@@ -124,58 +200,134 @@ export function GraphView({
     // Zoom first so the center tween runs last and lands on the node.
     graph.zoom(FOCUS_ZOOM, 500);
     graph.centerAt(node.x, node.y, 500);
-  }, [selectedId, data.nodes, ready, layout]);
+  }, [selectedId, data.nodes, ready, activeLayout]);
 
   useEffect(() => {
-    if (layout !== "path" || !ready || data.nodes.length === 0) return;
+    if (activeLayout !== "columns" && activeLayout !== "rings") return;
+    if (!ready || data.nodes.length === 0) return;
+    let cancelled = false;
+    const fit = () => {
+      if (!cancelled) ref.current?.zoomToFit(0, 72);
+    };
+    const soon = window.setTimeout(fit, 50);
+    const later = window.setTimeout(fit, 1100);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(soon);
+      window.clearTimeout(later);
+    };
+  }, [activeLayout, ready, data, size.width, size.height]);
+
+  useEffect(() => {
+    if (activeLayout !== "path" || !ready || data.nodes.length === 0) return;
     const graph = ref.current;
     if (!graph) return;
     fitPath(graph, data.nodes, size.width, size.height);
-  }, [layout, ready, data, size.width, size.height]);
+  }, [activeLayout, ready, data, size.width, size.height]);
+
+  const prepareLabels = useCallback(
+    (context: CanvasRenderingContext2D, scale: number) => {
+      const hover = activeLayout === "path" ? null : hoverRef.current;
+      const moving = easeHover(data.nodes, data.links, hover, selectedId, nodeAlpha.current, linkAlpha.current, fadeClock);
+      labelIds.current = activeLayout === "path" ? null : chooseLabels(data.nodes, hover, selectedId, scale, context);
+      if (moving !== fadingRef.current) {
+        fadingRef.current = moving;
+        setFading(moving);
+      }
+    },
+    [activeLayout, data.nodes, data.links, selectedId],
+  );
+
+  const paintNode = useCallback(
+    (node: DrawNode, context: CanvasRenderingContext2D, scale: number) => {
+      const alpha = nodeAlpha.current.get(node.id) ?? 1;
+      drawNode(node, context, scale, node.id === selectedId, alpha);
+    },
+    [selectedId],
+  );
+
+  const paintLabels = useCallback(
+    (context: CanvasRenderingContext2D, scale: number) => {
+      const ids = labelIds.current;
+      const hover = hoverRef.current;
+      const labeled = data.nodes.filter((node) => ids == null || ids.has(node.id));
+      // Hovered and selected names paint last, so a must-show label stays on top of another name.
+      labeled.sort((a, b) => labelRank(a, hover, selectedId) - labelRank(b, hover, selectedId));
+      for (const node of labeled) drawLabel(node, context, scale, nodeAlpha.current.get(node.id) ?? 1);
+    },
+    [data.nodes, selectedId],
+  );
+
+  function chooseExploreLayout(next: ExploreLayout) {
+    setExploreLayout(next);
+    try {
+      sessionStorage.setItem(LAYOUT_KEY, next);
+    } catch {
+      // Preference is optional.
+    }
+  }
 
   return (
     <>
-      <div className="graph-settings" ref={settingsRef}>
-        <button
-          type="button"
-          className="graph-settings-toggle"
-          aria-expanded={open}
-          aria-haspopup="dialog"
-          aria-label="Settings"
-          title="Settings"
-          onClick={() => setOpen((current) => !current)}
-        >
-          <GearIcon />
-        </button>
-        <Popover open={open} onClose={closeSettings} anchorRef={settingsRef} className="graph-settings-panel">
-          {showNodeCap && (
-            <label className="graph-cap">
-              <span>Nodes {nodeCap}</span>
-              <input
-                type="range"
-                min={MIN_NODE_CAP}
-                max={MAX_NODE_CAP}
-                step={5}
-                value={nodeCap}
-                onChange={(event) => onNodeCapChange(Number(event.target.value))}
-              />
-            </label>
-          )}
-          <fieldset>
-            <legend>Show</legend>
-            {TYPES.map((type) => (
-              <label key={type}>
+      {layout !== "path" && (
+        <div className="graph-settings" ref={settingsRef}>
+          <button
+            type="button"
+            className="graph-settings-toggle"
+            aria-expanded={open}
+            aria-haspopup="dialog"
+            aria-label="Settings"
+            title="Settings"
+            onClick={() => setOpen((current) => !current)}
+          >
+            <GearIcon />
+          </button>
+          <Popover open={open} onClose={closeSettings} anchorRef={settingsRef} className="graph-settings-panel">
+            <fieldset>
+              <legend>Layout</legend>
+              <div className="graph-layout" role="tablist" aria-label="Layout">
+                {EXPLORE_LAYOUTS.map((option) => (
+                  <button
+                    key={option}
+                    type="button"
+                    role="tab"
+                    aria-selected={exploreLayout === option}
+                    onClick={() => chooseExploreLayout(option)}
+                  >
+                    {LAYOUT_LABEL[option]}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+            {showNodeCap && (
+              <label className="graph-cap">
+                <span>Nodes {nodeCap}</span>
                 <input
-                  type="checkbox"
-                  checked={visible[type]}
-                  onChange={() => setVisible((current) => ({ ...current, [type]: !current[type] }))}
+                  type="range"
+                  min={MIN_NODE_CAP}
+                  max={MAX_NODE_CAP}
+                  step={5}
+                  value={nodeCap}
+                  onChange={(event) => onNodeCapChange(Number(event.target.value))}
                 />
-                {type}s
               </label>
-            ))}
-          </fieldset>
-        </Popover>
-      </div>
+            )}
+            <fieldset>
+              <legend>Show</legend>
+              {TYPES.map((type) => (
+                <label key={type}>
+                  <input
+                    type="checkbox"
+                    checked={visible[type]}
+                    onChange={() => setVisible((current) => ({ ...current, [type]: !current[type] }))}
+                  />
+                  {type}s
+                </label>
+              ))}
+            </fieldset>
+          </Popover>
+        </div>
+      )}
       <div className="graph-frame" ref={frameRef}>
         {!payload || data.nodes.length === 0 ? (
           <div className="graph-empty">{payload && payload.nodes.length > 0 ? "No nodes to show." : emptyMessage}</div>
@@ -187,11 +339,12 @@ export function GraphView({
             graphData={data}
             backgroundColor="#ffffff"
             nodeId="id"
-            cooldownTicks={90}
-            nodeLabel={(node) => `${node.name} · ${node.entityType}`}
-            linkLabel={(link) => (link.kind === "SIMILAR" && link.score ? `similar ${link.score}` : link.kind)}
-            linkColor={(link) => (link.kind === "SIMILAR" ? "rgba(0,0,0,0.85)" : "rgba(0,0,0,0.35)")}
-            linkWidth={(link) => (link.kind === "SIMILAR" ? 1.5 : 0.7)}
+            cooldownTicks={activeLayout === "columns" || activeLayout === "rings" ? 160 : 90}
+            autoPauseRedraw={!fading}
+            nodeLabel={activeLayout === "path" ? () => "" : (node) => nodePhrase(node as DrawNode)}
+            linkLabel={(link) => linkPhrase(link as SimLink)}
+            linkColor={(link) => linkPaint(link as SimLink, linkPresence(link as SimLink, linkAlpha.current))}
+            linkWidth={(link) => linkWidth(link as SimLink, linkPresence(link as SimLink, linkAlpha.current))}
             onNodeClick={(node) => {
               const drawn = node as DrawNode;
               onSelect(drawn.entityType, drawn.discogsId);
@@ -199,10 +352,36 @@ export function GraphView({
             onNodeRightClick={(node, event) => {
               const drawn = node as DrawNode;
               setOpen(false);
-              setMenu({ id: drawn.id, name: drawn.name, ...menuPosition(event.clientX, event.clientY) });
+              setMenu({
+                id: drawn.id,
+                name: drawn.name,
+                seed: drawn.seed,
+                entityType: drawn.entityType,
+                discogsId: drawn.discogsId,
+                ...menuPosition(
+                  event.clientX,
+                  event.clientY,
+                  menuHeight(layout === "path", onToggleSeed != null, onExploreNode != null, onStartPath != null),
+                ),
+              });
             }}
+            onNodeHover={
+              activeLayout === "path"
+                ? undefined
+                : (node) => {
+                    const id = node ? (node as DrawNode).id : null;
+                    if (hoverRef.current === id) return;
+                    hoverRef.current = id;
+                    // The canvas may have been paused since the last step. A stale clock
+                    // would spend that whole gap in one jump, so the return starts like a fresh frame.
+                    fadeClock.current = 0;
+                    setFading(true);
+                  }
+            }
             onBackgroundRightClick={closeMenu}
-            nodeCanvasObject={(node, context, scale) => drawNode(node as DrawNode, context, scale, node.id === selectedId)}
+            onRenderFramePre={prepareLabels}
+            onRenderFramePost={paintLabels}
+            nodeCanvasObject={(node, context, scale) => paintNode(node as DrawNode, context, scale)}
             nodePointerAreaPaint={(node, color, context) => {
               context.fillStyle = color;
               context.beginPath();
@@ -225,21 +404,84 @@ export function GraphView({
             >
               Copy text
             </button>
-            <button
-              type="button"
-              role="menuitem"
-              onClick={() => {
-                setRemoved((current) => (current.includes(menu.id) ? current : [...current, menu.id]));
-                setMenu(null);
-              }}
-            >
-              Remove node
-            </button>
+            {onExploreNode && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  onExploreNode({
+                    entityType: menu.entityType,
+                    discogsId: menu.discogsId,
+                    name: menu.name,
+                  });
+                  setMenu(null);
+                }}
+              >
+                Explore this node
+              </button>
+            )}
+            {onToggleSeed && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  onToggleSeed({
+                    entityType: menu.entityType,
+                    discogsId: menu.discogsId,
+                    name: menu.name,
+                    seed: menu.seed,
+                  });
+                  setMenu(null);
+                }}
+              >
+                {menu.seed ? "Remove seed" : "Use as seed"}
+              </button>
+            )}
+            {onStartPath && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  onStartPath({
+                    entityType: menu.entityType,
+                    discogsId: menu.discogsId,
+                    name: menu.name,
+                  });
+                  setMenu(null);
+                }}
+              >
+                Start path from here
+              </button>
+            )}
+            {layout !== "path" && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  setRemoved((current) => (current.includes(menu.id) ? current : [...current, menu.id]));
+                  setMenu(null);
+                }}
+              >
+                Remove node
+              </button>
+            )}
           </>
         )}
       </Popover>
     </>
   );
+}
+
+function readExploreLayout(): ExploreLayout {
+  try {
+    const value = sessionStorage.getItem(LAYOUT_KEY);
+    if (value === "columns" || value === "rings" || value === "proximity" || value === "force") {
+      return value === "force" ? "proximity" : value;
+    }
+  } catch {
+    // Preference is optional.
+  }
+  return "proximity";
 }
 
 function projectGraph(payload: GraphPayload | null, removed: string[], visible: Record<EntityType, boolean>): PlainGraph {
@@ -263,19 +505,104 @@ function orderedSignature(graph: PlainGraph): string {
   return `${nodes}\n~\n${links}`;
 }
 
-function adoptGraph(graph: PlainGraph, cache: Map<string, DrawNode>, layout: GraphLayout): SimGraph {
-  const seeds = graph.nodes.filter((node) => node.seed);
-  const nodes = graph.nodes.map((node) => reuseNode(node, seeds, cache));
+function adoptGraph(
+  graph: PlainGraph,
+  cache: Map<string, DrawNode>,
+  layout: GraphLayout,
+  layoutChanged: boolean,
+  focus?: EntityType,
+): SimGraph {
+  const previousSeeds = new Set<string>();
+  const nodes = graph.nodes.map((node) => {
+    const taken = takeNode(node, cache);
+    if (taken.wasSeed) previousSeeds.add(node.id);
+    return taken.node;
+  });
   if (layout === "path") pinPath(nodes);
-  else placeNewcomers(nodes, graph.links);
+  else if (layoutChanged) arrange(nodes, graph.links, layout, focus);
+  else {
+    unpinRetiredSeeds(nodes, previousSeeds);
+    if (layout === "proximity") pinNewSeeds(nodes, previousSeeds, "row");
+    if (layout === "rings") pinNewSeeds(nodes, previousSeeds, "center");
+    placeNewcomers(nodes, graph.links, layout, focus);
+    dropUnplaced(nodes, graph.links, layout, focus);
+  }
   return { nodes, links: graph.links.map((link) => ({ ...link })) };
+}
+
+function takeNode(node: GraphNode, cache: Map<string, DrawNode>): { node: DrawNode; wasSeed: boolean } {
+  const existing = cache.get(node.id);
+  if (!existing) {
+    const created: DrawNode = { ...node };
+    cache.set(node.id, created);
+    return { node: created, wasSeed: false };
+  }
+  const wasSeed = existing.seed;
+  existing.entityType = node.entityType;
+  existing.discogsId = node.discogsId;
+  existing.name = node.name;
+  existing.seed = node.seed;
+  existing.year = node.year ?? existing.year;
+  existing.vx = 0;
+  existing.vy = 0;
+  return { node: existing, wasSeed };
+}
+
+function arrange(nodes: DrawNode[], links: GraphLink[], layout: ExploreLayout, focus?: EntityType) {
+  for (const node of nodes) {
+    delete node.fx;
+    delete node.fy;
+    node.vx = 0;
+    node.vy = 0;
+  }
+  if (layout === "proximity") {
+    pinNewSeeds(nodes, new Set(), "row");
+    return;
+  }
+  if (layout === "columns") {
+    scatterColumns(nodes);
+    return;
+  }
+  pinNewSeeds(nodes, new Set(), "center");
+  scatterRings(nodes, links, focus);
+}
+
+function pinNewSeeds(nodes: DrawNode[], previousSeeds: Set<string>, mode: "row" | "center") {
+  const seeds = nodes.filter((node) => node.seed);
+  seeds.forEach((node, index) => {
+    if (previousSeeds.has(node.id) && node.fx != null) return;
+    if (mode === "row") {
+      node.fx = (index - (seeds.length - 1) / 2) * 80;
+      node.fy = 0;
+      return;
+    }
+    const spread = seeds.length === 1 ? 0 : 22;
+    const angle = (index / seeds.length) * Math.PI * 2;
+    node.fx = Math.cos(angle) * spread;
+    node.fy = Math.sin(angle) * spread;
+    node.x = node.fx;
+    node.y = node.fy;
+    node.vx = 0;
+    node.vy = 0;
+  });
+}
+
+function unpinRetiredSeeds(nodes: DrawNode[], previousSeeds: Set<string>) {
+  for (const node of nodes) {
+    if (!node.seed && previousSeeds.has(node.id)) {
+      delete node.fx;
+      delete node.fy;
+    }
+  }
 }
 
 function pinPath(nodes: DrawNode[]) {
   const mid = (nodes.length - 1) / 2;
   nodes.forEach((node, index) => {
-    const x = (index - mid) * PATH_STEP;
-    const y = (index % 2) * PATH_STAGGER;
+    // Hashed from the id so a refreshed path keeps the same wobble.
+    const jitter = pathJitter(node.id);
+    const x = (index - mid) * PATH_STEP + jitter.x;
+    const y = (index % 2) * PATH_STAGGER + jitter.y;
     node.fx = x;
     node.fy = y;
     node.x = x;
@@ -283,6 +610,238 @@ function pinPath(nodes: DrawNode[]) {
     node.vx = 0;
     node.vy = 0;
   });
+}
+
+function pathJitter(id: string): { x: number; y: number } {
+  return {
+    x: (unitHash(`${id}:x`) * 2 - 1) * PATH_JITTER_X,
+    y: (unitHash(`${id}:y`) * 2 - 1) * PATH_JITTER_Y,
+  };
+}
+
+function unitHash(value: string): number {
+  let hash = 2166136261;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return (hash >>> 0) / 4294967296;
+}
+
+function scatterColumns(nodes: DrawNode[]) {
+  const centers = columnCenters(nodes);
+  const groups = new Map<EntityType, DrawNode[]>();
+  for (const node of nodes) {
+    const list = groups.get(node.entityType) ?? [];
+    list.push(node);
+    groups.set(node.entityType, list);
+  }
+  for (const [type, group] of groups) {
+    const x = centers.get(type) ?? 0;
+    group.forEach((node, index) => {
+      node.x = x;
+      node.y = (index - (group.length - 1) / 2) * COLUMN_ROW;
+      node.vx = 0;
+      node.vy = 0;
+    });
+  }
+}
+
+function scatterRings(nodes: DrawNode[], links: GraphLink[], focus?: EntityType) {
+  const radii = ringRadii(nodes, focus);
+  const order = ringOrder(focus).filter((type) => radii.has(type));
+  const byId = new Map(nodes.map((node) => [node.id, node]));
+  order.forEach((type, index) => {
+    const radius = radii.get(type);
+    if (radius == null) return;
+    const ring = nodes.filter((node) => !node.seed && node.entityType === type);
+    if (index === 0) {
+      placeRing(ring, radius);
+      return;
+    }
+    placeAroundParents(ring, radius, order[index - 1], links, byId);
+  });
+}
+
+function placeRing(nodes: DrawNode[], radius: number) {
+  nodes.forEach((node, index) => {
+    const angle = (index / Math.max(nodes.length, 1)) * Math.PI * 2 - Math.PI / 2;
+    setOnRing(node, angle, radius);
+  });
+}
+
+function placeAroundParents(
+  nodes: DrawNode[],
+  radius: number,
+  parentType: EntityType,
+  links: GraphLink[],
+  byId: Map<string, DrawNode>,
+) {
+  const groups = new Map<string, DrawNode[]>();
+  const orphans: DrawNode[] = [];
+  for (const node of nodes) {
+    const parent = ringParent(node.id, links, byId, parentType);
+    if (!parent || !onRing(parent)) {
+      orphans.push(node);
+      continue;
+    }
+    const list = groups.get(parent.id) ?? [];
+    list.push(node);
+    groups.set(parent.id, list);
+  }
+
+  const parents = [...groups.keys()].map((id) => byId.get(id)!).sort((a, b) => nodeAngle(a) - nodeAngle(b));
+  const ideal = RING_NODE_GAP / radius;
+  const seated: DrawNode[] = [];
+  parents.forEach((parent, index) => {
+    const group = groups.get(parent.id) ?? [];
+    const spacing = fanSpacing(group.length, parentRoom(parents, index), ideal);
+    const span = (group.length - 1) * spacing;
+    const start = nodeAngle(parent) - span / 2;
+    group.forEach((node, slot) => setOnRing(node, start + slot * spacing, radius));
+    seated.push(...group);
+  });
+  for (const node of orphans) {
+    setOnRing(node, gapCenter(seated.map(nodeAngle)), radius);
+    seated.push(node);
+  }
+}
+
+function columnCenters(nodes: DrawNode[]): Map<EntityType, number> {
+  const present = COLUMN_ORDER.filter((type) => nodes.some((node) => node.entityType === type));
+  const centers = new Map<EntityType, number>();
+  present.forEach((type, index) => {
+    centers.set(type, (index - (present.length - 1) / 2) * COLUMN_GAP);
+  });
+  return centers;
+}
+
+function ringOrder(focus?: EntityType): EntityType[] {
+  // Releases sit between artists and labels, since that is the link between them.
+  if (focus === "artist") return ["artist", "release", "label"];
+  const start = focus ? RING_ORDER.indexOf(focus) : 0;
+  if (start <= 0) return RING_ORDER;
+  return [...RING_ORDER.slice(start), ...RING_ORDER.slice(0, start)];
+}
+
+function ringRadii(nodes: DrawNode[], focus?: EntityType): Map<EntityType, number> {
+  const present = ringOrder(focus).filter((type) => nodes.some((node) => !node.seed && node.entityType === type));
+  const radii = new Map<EntityType, number>();
+  present.forEach((type, index) => {
+    radii.set(type, (index + 1) * RING_GAP);
+  });
+  return radii;
+}
+
+function ringRadius(node: DrawNode, radii: Map<EntityType, number>): number {
+  if (node.seed) return 0;
+  return radii.get(node.entityType) ?? RING_GAP;
+}
+
+function seatRingNode(
+  node: DrawNode,
+  nodes: DrawNode[],
+  links: GraphLink[],
+  radii: Map<EntityType, number>,
+  focus?: EntityType,
+): boolean {
+  const order = ringOrder(focus).filter((type) => radii.has(type));
+  const index = order.indexOf(node.entityType);
+  if (index < 0) return false;
+  const radius = ringRadius(node, radii);
+  const parentType = index > 0 ? order[index - 1] : undefined;
+  const byId = new Map(nodes.map((item) => [item.id, item]));
+  if (parentType) {
+    const parent = ringParent(node.id, links, byId, parentType);
+    if (parent && !onRing(parent)) return false;
+    if (parent) {
+      const taken = nodes.filter((item) => item !== node && item.entityType === node.entityType && onRing(item)).map(nodeAngle);
+      setOnRing(node, nextFanAngle(nodeAngle(parent), taken, radius), radius);
+      return true;
+    }
+  }
+  const taken = nodes.filter((item) => item !== node && item.entityType === node.entityType && onRing(item)).map(nodeAngle);
+  setOnRing(node, gapCenter(taken), radius);
+  return true;
+}
+
+function ringParent(id: string, links: GraphLink[], byId: Map<string, DrawNode>, type: EntityType): DrawNode | undefined {
+  for (const link of links) {
+    const otherId = link.source === id ? link.target : link.target === id ? link.source : "";
+    const other = otherId ? byId.get(otherId) : undefined;
+    if (other && other.entityType === type && !other.seed) return other;
+  }
+  return undefined;
+}
+
+function fanSpacing(count: number, room: number, ideal: number): number {
+  if (count <= 1) return 0;
+  return Math.min(ideal, room / count);
+}
+
+function parentRoom(parents: DrawNode[], index: number): number {
+  if (parents.length <= 1) return Math.PI * 2;
+  const angle = nodeAngle(parents[index]);
+  const prev = nodeAngle(parents[(index - 1 + parents.length) % parents.length]);
+  const next = nodeAngle(parents[(index + 1) % parents.length]);
+  return Math.min(forwardAngle(prev, angle), forwardAngle(angle, next));
+}
+
+function nextFanAngle(origin: number, taken: number[], radius: number): number {
+  const step = RING_NODE_GAP / Math.max(radius, 1);
+  const clear = (angle: number) => taken.every((held) => angleDistance(angle, held) >= step * 0.9);
+  const limit = taken.length + 1;
+  for (let i = 0; i <= limit; i++) {
+    const candidates = i === 0 ? [origin] : [origin + i * step, origin - i * step];
+    for (const angle of candidates) {
+      if (clear(angle)) return angle;
+    }
+  }
+  return origin + limit * step;
+}
+
+function gapCenter(angles: number[]): number {
+  if (angles.length === 0) return -Math.PI / 2;
+  const sorted = [...angles].sort((a, b) => a - b);
+  let best = -1;
+  let at = sorted[0];
+  for (let i = 0; i < sorted.length; i++) {
+    const current = sorted[i];
+    const next = i + 1 < sorted.length ? sorted[i + 1] : sorted[0] + Math.PI * 2;
+    const gap = next - current;
+    if (gap > best) {
+      best = gap;
+      at = current + gap / 2;
+    }
+  }
+  return at;
+}
+
+function setOnRing(node: DrawNode, angle: number, radius: number) {
+  node.x = Math.cos(angle) * radius;
+  node.y = Math.sin(angle) * radius;
+  node.vx = 0;
+  node.vy = 0;
+}
+
+function onRing(node: DrawNode): boolean {
+  if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) return false;
+  return Math.hypot(node.x ?? 0, node.y ?? 0) >= 40;
+}
+
+function nodeAngle(node: DrawNode): number {
+  const angle = Math.atan2(node.y ?? 0, node.x ?? 0);
+  return angle < 0 ? angle + Math.PI * 2 : angle;
+}
+
+function forwardAngle(from: number, to: number): number {
+  const turn = (to - from) % (Math.PI * 2);
+  return turn < 0 ? turn + Math.PI * 2 : turn;
+}
+
+function angleDistance(a: number, b: number): number {
+  const gap = Math.abs(a - b) % (Math.PI * 2);
+  return Math.min(gap, Math.PI * 2 - gap);
 }
 
 function fitPath(graph: ForceGraphMethods, nodes: DrawNode[], width: number, height: number) {
@@ -307,55 +866,78 @@ function fitPath(graph: ForceGraphMethods, nodes: DrawNode[], width: number, hei
   graph.centerAt((minX + maxX) / 2, (minY + maxY) / 2, 400);
 }
 
-function reuseNode(node: GraphNode, seeds: GraphNode[], cache: Map<string, DrawNode>): DrawNode {
-  const index = seeds.findIndex((seed) => seed.id === node.id);
-  const existing = cache.get(node.id);
-  if (!existing) {
-    const created: DrawNode = { ...node };
-    if (index >= 0) {
-      created.fx = (index - (seeds.length - 1) / 2) * 80;
-      created.fy = 0;
-    }
-    cache.set(node.id, created);
-    return created;
-  }
-  const wasSeed = existing.seed;
-  existing.entityType = node.entityType;
-  existing.discogsId = node.discogsId;
-  existing.name = node.name;
-  existing.seed = node.seed;
-  existing.vx = 0;
-  existing.vy = 0;
-  if (index >= 0 && !wasSeed) {
-    existing.fx = (index - (seeds.length - 1) / 2) * 80;
-    existing.fy = 0;
-  } else if (index < 0 && wasSeed) {
-    delete existing.fx;
-    delete existing.fy;
-  }
-  return existing;
-}
-
-function placeNewcomers(nodes: DrawNode[], links: GraphLink[]) {
+function placeNewcomers(nodes: DrawNode[], links: GraphLink[], layout: ExploreLayout, focus?: EntityType) {
   const placed = (node: DrawNode) => Number.isFinite(node.x) && Number.isFinite(node.y);
   if (!nodes.some(placed)) return;
+  const centers = layout === "columns" ? columnCenters(nodes) : null;
+  const radii = layout === "rings" ? ringRadii(nodes, focus) : null;
   const byId = new Map(nodes.map((node) => [node.id, node]));
   let pending = nodes.filter((node) => node.fx == null && !placed(node));
   for (let pass = 0; pass < nodes.length && pending.length > 0; pass++) {
     const next: DrawNode[] = [];
     for (const node of pending) {
+      if (radii) {
+        if (!seatRingNode(node, nodes, links, radii, focus)) next.push(node);
+        continue;
+      }
       const anchor = anchoredNeighbor(node.id, links, byId);
       if (!anchor) {
         next.push(node);
         continue;
       }
-      const angle = (byId.size - pending.length + next.length) * 2.4;
-      node.x = anchor.x! + Math.cos(angle) * 36;
-      node.y = anchor.y! + Math.sin(angle) * 36;
+      if (centers) {
+        node.x = centers.get(node.entityType) ?? anchor.x;
+        node.y = (anchor.y ?? 0) + COLUMN_ROW;
+      } else {
+        const angle = (byId.size - pending.length + next.length) * 2.4;
+        node.x = anchor.x! + Math.cos(angle) * 36;
+        node.y = anchor.y! + Math.sin(angle) * 36;
+      }
     }
     if (next.length === pending.length) break;
     pending = next;
   }
+}
+
+function dropUnplaced(nodes: DrawNode[], links: GraphLink[], layout: ExploreLayout, focus?: EntityType) {
+  const loose = nodes.filter((node) => !Number.isFinite(node.x) || !Number.isFinite(node.y));
+  if (loose.length === 0 || layout === "proximity") return;
+  if (layout === "columns") {
+    const centers = columnCenters(nodes);
+    const byType = new Map<EntityType, DrawNode[]>();
+    for (const node of loose) {
+      const list = byType.get(node.entityType) ?? [];
+      list.push(node);
+      byType.set(node.entityType, list);
+    }
+    for (const [type, group] of byType) {
+      const x = centers.get(type) ?? 0;
+      const placedY = nodes
+        .filter((node) => node.entityType === type && !group.includes(node) && Number.isFinite(node.y))
+        .map((node) => node.y ?? 0);
+      const start = placedY.length > 0 ? Math.max(...placedY) + COLUMN_ROW : 0;
+      group.forEach((node, index) => {
+        node.x = x;
+        node.y = start + index * COLUMN_ROW;
+      });
+    }
+    return;
+  }
+  const radii = ringRadii(nodes, focus);
+  let pending = loose;
+  for (let pass = 0; pass < nodes.length && pending.length > 0; pass++) {
+    const next: DrawNode[] = [];
+    for (const node of pending) {
+      if (!seatRingNode(node, nodes, links, radii, focus)) next.push(node);
+    }
+    if (next.length === pending.length) break;
+    pending = next;
+  }
+  pending.forEach((node, index) => {
+    const radius = ringRadius(node, radii);
+    const angle = (index / Math.max(pending.length, 1)) * Math.PI * 2;
+    setOnRing(node, angle, radius);
+  });
 }
 
 function anchoredNeighbor(id: string, links: GraphLink[], byId: Map<string, DrawNode>): DrawNode | undefined {
@@ -367,9 +949,201 @@ function anchoredNeighbor(id: string, links: GraphLink[], byId: Map<string, Draw
   return undefined;
 }
 
-function menuPosition(x: number, y: number) {
-  const width = 168;
-  const height = 64;
+function neighborIds(links: SimLink[], id: string): Set<string> {
+  const ids = new Set<string>([id]);
+  for (const link of links) {
+    const source = endpointId(link.source);
+    const target = endpointId(link.target);
+    if (source === id) ids.add(target);
+    else if (target === id) ids.add(source);
+  }
+  return ids;
+}
+
+function endpointId(end: string | DrawNode): string {
+  return typeof end === "string" ? end : end.id;
+}
+
+function endpointType(end: string | DrawNode): EntityType | null {
+  if (typeof end !== "string") return end.entityType;
+  const type = end.slice(0, end.indexOf(":"));
+  if (type === "artist" || type === "label" || type === "release") return type;
+  return null;
+}
+
+function crossRelease(link: SimLink): boolean {
+  const source = endpointType(link.source);
+  const target = endpointType(link.target);
+  return (source === "release") !== (target === "release");
+}
+
+function nodePhrase(node: DrawNode): string {
+  const year = node.entityType === "release" && node.year ? ` (${node.year})` : "";
+  return `${node.name}${year} · ${node.entityType}`;
+}
+
+function linkPhrase(link: SimLink): string {
+  // Artist and label lists sort related releases by year, and that year is stored on the
+  // similarity edge. It is not a score, so the edge stays "similar".
+  if (link.kind === "SIMILAR") return link.score && !crossRelease(link) ? `similar ${link.score}` : "similar";
+  if (link.kind === "PRIMARY_ON") return "credited on";
+  if (link.kind === "APPEARS_ON") return "appears on";
+  if (link.kind === "REMIXED") return "remixed";
+  if (link.kind === "ISSUED") return "issued by";
+  if (link.kind === "ALIAS_OF") return "alias of";
+  if (link.kind === "MEMBER_OF") return "member of";
+  return "sublabel of";
+}
+
+function linkKey(link: SimLink): string {
+  return `${link.kind}|${endpointId(link.source)}|${endpointId(link.target)}`;
+}
+
+function linkPresence(link: SimLink, alphas: Map<string, number>): number {
+  return alphas.get(linkKey(link)) ?? 1;
+}
+
+function linkPaint(link: SimLink, presence: number): string {
+  const full = link.kind === "SIMILAR" ? 0.85 : 0.35;
+  const opacity = 0.05 + (full - 0.05) * presence;
+  return `rgba(0,0,0,${opacity})`;
+}
+
+function linkWidth(link: SimLink, presence: number): number {
+  const full = link.kind === "SIMILAR" ? 1.5 : 0.7;
+  return 0.4 + (full - 0.4) * presence;
+}
+
+function easeHover(
+  nodes: DrawNode[],
+  links: SimLink[],
+  hoverId: string | null,
+  selectedId: string | null,
+  nodeAlpha: Map<string, number>,
+  linkAlpha: Map<string, number>,
+  clock: { current: number },
+): boolean {
+  const now = performance.now();
+  const dt = clock.current === 0 ? 16 : Math.min(48, now - clock.current);
+  clock.current = now;
+  const step = 1 - Math.exp(-dt / FADE_TAU);
+  const neighbors = hoverId ? neighborIds(links, hoverId) : null;
+  let moving = false;
+  const seenNodes = new Set<string>();
+  for (const node of nodes) {
+    seenNodes.add(node.id);
+    const near = !hoverId || node.id === hoverId || neighbors!.has(node.id);
+    const target = near ? 1 : node.id === selectedId ? SELECTED_DIM_ALPHA : DIM_ALPHA;
+    moving = easeToward(nodeAlpha, node.id, target, step) || moving;
+  }
+  for (const id of nodeAlpha.keys()) if (!seenNodes.has(id)) nodeAlpha.delete(id);
+  const seenLinks = new Set<string>();
+  for (const link of links) {
+    const key = linkKey(link);
+    seenLinks.add(key);
+    const lit = !neighbors || (neighbors.has(endpointId(link.source)) && neighbors.has(endpointId(link.target)));
+    moving = easeToward(linkAlpha, key, lit ? 1 : 0, step) || moving;
+  }
+  for (const key of linkAlpha.keys()) if (!seenLinks.has(key)) linkAlpha.delete(key);
+  return moving;
+}
+
+function easeToward(values: Map<string, number>, key: string, target: number, step: number): boolean {
+  const current = values.get(key) ?? 1;
+  const next = current + (target - current) * step;
+  if (Math.abs(next - target) <= FADE_SNAP) {
+    values.set(key, target);
+    return false;
+  }
+  values.set(key, next);
+  return true;
+}
+
+type LiveForce = {
+  distance?: (fn: (link: SimLink) => number) => void;
+  strength?: (value?: Strength) => Strength;
+};
+
+function asForce(force: unknown): LiveForce | undefined {
+  return force as LiveForce | undefined;
+}
+
+function putForce(graph: ForceGraphMethods, name: string, force: object | null) {
+  graph.d3Force(name, force as never);
+}
+
+function linkDistance(link: SimLink, layout: GraphLayout): number {
+  if (layout === "proximity") return proximityDistance(link);
+  if (link.kind === "SIMILAR" && link.score) return Math.max(40, 150 / link.score);
+  return layout === "columns" ? 80 : 46;
+}
+
+function proximityDistance(link: SimLink): number {
+  if (link.kind === "SIMILAR" && link.score) return 36 + 200 * Math.exp(-link.score / 5);
+  if (link.kind === "ISSUED" || link.kind === "SUBLABEL_OF") return 42;
+  if (link.kind === "ALIAS_OF" || link.kind === "MEMBER_OF") return 36;
+  return 120;
+}
+
+function proximityStrength(link: SimLink): number {
+  if (link.kind === "SIMILAR") return 1;
+  if (link.kind === "ISSUED" || link.kind === "SUBLABEL_OF") return 0.5;
+  if (link.kind === "ALIAS_OF" || link.kind === "MEMBER_OF") return 0.55;
+  return 0.05;
+}
+
+function writeStrength(force: LiveForce | undefined, value: Strength | null) {
+  if (value == null) return;
+  force?.strength?.(value);
+}
+
+function chooseLabels(
+  nodes: DrawNode[],
+  hoverId: string | null,
+  selectedId: string | null,
+  scale: number,
+  context: CanvasRenderingContext2D,
+): Set<string> {
+  const fontSize = LABEL_FONT / Math.max(scale, 0.01);
+  context.font = `${fontSize}px sans-serif`;
+  const pad = 3 / Math.max(scale, 0.01);
+  const shown = new Set<string>();
+  const boxes: Box[] = [];
+  const ranked = [...nodes].sort((a, b) => labelRank(b, hoverId, selectedId) - labelRank(a, hoverId, selectedId));
+  for (const node of ranked) {
+    if (!Number.isFinite(node.x) || !Number.isFinite(node.y)) continue;
+    const pinned = node.id === hoverId || node.id === selectedId;
+    const must = pinned || (node.seed && !hoverId);
+    const width = Math.max(context.measureText(node.name).width, node.name.length * fontSize * 0.5);
+    const height = fontSize * 1.15;
+    const radius = node.seed ? 8 : 5;
+    const box = { x: (node.x ?? 0) + radius + 4, y: (node.y ?? 0) - height / 2, w: width, h: height };
+    if (must || !boxes.some((other) => overlaps(box, other, pad))) {
+      shown.add(node.id);
+      boxes.push(box);
+    }
+  }
+  return shown;
+}
+
+function labelRank(node: DrawNode, hoverId: string | null, selectedId: string | null): number {
+  if (node.id === hoverId) return 3;
+  if (node.id === selectedId) return 2;
+  if (node.seed) return 1;
+  return 0;
+}
+
+function overlaps(a: Box, b: Box, pad: number): boolean {
+  return a.x - pad < b.x + b.w && a.x + a.w + pad > b.x && a.y - pad < b.y + b.h && a.y + a.h + pad > b.y;
+}
+
+function menuHeight(path: boolean, seedAction: boolean, exploreAction: boolean, startPathAction: boolean): number {
+  const items = 1 + (exploreAction ? 1 : 0) + (seedAction ? 1 : 0) + (startPathAction ? 1 : 0) + (path ? 0 : 1);
+  return items * 32;
+}
+
+function menuPosition(x: number, y: number, height = 64) {
+  const width = 196;
   const margin = 8;
   return {
     left: Math.max(margin, Math.min(x, window.innerWidth - width - margin)),
@@ -386,23 +1160,38 @@ function GearIcon() {
   );
 }
 
-function drawNode(node: DrawNode, context: CanvasRenderingContext2D, scale: number, selected: boolean) {
+function drawNode(node: DrawNode, context: CanvasRenderingContext2D, scale: number, selected: boolean, alpha: number) {
   const x = node.x ?? 0;
   const y = node.y ?? 0;
-  const radius = node.seed ? 7 : 5;
+  const radius = node.seed ? 8 : 5;
+  context.save();
+  context.globalAlpha = alpha;
   context.beginPath();
   context.arc(x, y, radius, 0, Math.PI * 2);
   context.fillStyle = COLOR[node.entityType] ?? "#221c16";
   context.fill();
   if (selected) {
+    context.beginPath();
+    context.arc(x, y, radius, 0, Math.PI * 2);
     context.lineWidth = 2 / scale;
     context.strokeStyle = "#000";
     context.stroke();
   }
-  const fontSize = 11 / scale;
+  context.restore();
+}
+
+function drawLabel(node: DrawNode, context: CanvasRenderingContext2D, scale: number, alpha: number) {
+  const x = node.x;
+  const y = node.y;
+  if (x == null || y == null || !Number.isFinite(x) || !Number.isFinite(y)) return;
+  const radius = node.seed ? 8 : 5;
+  context.save();
+  context.globalAlpha = alpha;
+  const fontSize = LABEL_FONT / scale;
   context.font = `${fontSize}px sans-serif`;
   context.fillStyle = "#000";
   context.textAlign = "left";
   context.textBaseline = "middle";
   context.fillText(node.name, x + radius + 4, y);
+  context.restore();
 }

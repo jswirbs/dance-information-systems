@@ -9,20 +9,24 @@ export async function graphFor(seeds: Seed[], target: EntityType, nodeCap = DEFA
   const rows = await relatedDetailed(seeds, target, 12);
   const nodes = new Map<string, GraphNode>();
 
-  const add = (type: EntityType, id: number, name: string, seed: boolean): string | null => {
+  const add = (type: EntityType, id: number, name: string, seed: boolean, year: number | null = null): string | null => {
     const key = `${type}:${id}`;
     const existing = nodes.get(key);
     if (existing) {
       existing.seed = existing.seed || seed;
+      if (existing.year == null && year != null) existing.year = year;
       return key;
     }
     if (nodes.size >= cap && !seed) return null;
-    nodes.set(key, { id: key, entityType: type, discogsId: id, name, seed });
+    nodes.set(key, { id: key, entityType: type, discogsId: id, name, seed, year });
     return key;
   };
 
-  for (const seed of seeds) add(seed.type, seed.id, await lookupName(seed), true);
-  for (const row of rows) add(row.type, row.id, row.name, false);
+  for (const seed of seeds) {
+    const card = await lookupCard(seed);
+    add(seed.type, seed.id, card.name, true, card.year);
+  }
+  for (const row of rows) add(row.type, row.id, row.name, false, row.year);
   for (const row of rows) {
     for (const bridge of row.bridges) add(bridge.type, bridge.id, bridge.name, false);
   }
@@ -87,7 +91,7 @@ async function addStructuralLinks(
          WITH shown, l, head(items) AS chosen, items
          WITH shown, l, chosen.release AS r, [item IN items WHERE item.release = chosen.release | item.credit] AS credits
          UNWIND credits AS credit
-         RETURN shown.discogsId AS artistId, r.discogsId AS releaseId, r.title AS title,
+         RETURN shown.discogsId AS artistId, r.discogsId AS releaseId, r.title AS title, r.year AS year,
                 l.discogsId AS labelId, credit
          LIMIT ${Math.max(80, cap * 2)}`,
         { artistIds, labelIds, seedReleaseIds },
@@ -95,7 +99,14 @@ async function addStructuralLinks(
       for (const record of paths.records) {
         const artist = nodeKey(nodes, "artist", asNumber(record.get("artistId")));
         const label = nodeKey(nodes, "label", asNumber(record.get("labelId")));
-        const release = addIfRoom(nodes, cap, "release", asNumber(record.get("releaseId")), asString(record.get("title")));
+        const release = addIfRoom(
+          nodes,
+          cap,
+          "release",
+          asNumber(record.get("releaseId")),
+          asString(record.get("title")),
+          asNumber(record.get("year")),
+        );
         const credit = String(record.get("credit"));
         if (release && label) pushLink({ source: label, target: release, kind: "ISSUED" });
         if (release && artist && isCredit(credit)) pushLink({ source: artist, target: release, kind: credit });
@@ -139,12 +150,17 @@ function addIfRoom(
   type: EntityType,
   id: number | null,
   name: string | null,
+  year: number | null = null,
 ): string | null {
   if (id == null) return null;
   const key = `${type}:${id}`;
-  if (nodes.has(key)) return key;
+  const existing = nodes.get(key);
+  if (existing) {
+    if (existing.year == null && year != null) existing.year = year;
+    return key;
+  }
   if (nodes.size >= cap) return null;
-  nodes.set(key, { id: key, entityType: type, discogsId: id, name: name ?? String(id), seed: false });
+  nodes.set(key, { id: key, entityType: type, discogsId: id, name: name ?? String(id), seed: false, year });
   return key;
 }
 
@@ -162,11 +178,13 @@ function isCredit(credit: string): credit is "PRIMARY_ON" | "APPEARS_ON" | "REMI
   return credit === "PRIMARY_ON" || credit === "APPEARS_ON" || credit === "REMIXED";
 }
 
-async function lookupName(seed: Seed): Promise<string> {
+async function lookupCard(seed: Seed): Promise<{ name: string; year: number | null }> {
   const label = seed.type === "artist" ? "Artist" : seed.type === "label" ? "Label" : "Release";
   const field = seed.type === "release" ? "n.title" : "n.name";
   return withSession(async (session) => {
-    const result = await session.run(`MATCH (n:${label} {discogsId: $id}) RETURN ${field} AS name`, { id: seed.id });
-    return result.records[0] ? String(result.records[0].get("name")) : String(seed.id);
+    const result = await session.run(`MATCH (n:${label} {discogsId: $id}) RETURN ${field} AS name, n.year AS year`, { id: seed.id });
+    const record = result.records[0];
+    if (!record) return { name: String(seed.id), year: null };
+    return { name: String(record.get("name")), year: asNumber(record.get("year")) };
   });
 }

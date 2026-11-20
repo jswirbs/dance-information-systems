@@ -5,7 +5,9 @@ import { ApiError, api } from "./api";
 import { ExplorePanel } from "./ExplorePanel";
 import { GraphView } from "./GraphView";
 import { PathPanel } from "./PathPanel";
-import { Detail, Thumb } from "./ui";
+import { PlayerProvider } from "./player";
+import { SearchSuggest } from "./SearchSuggest";
+import { Detail } from "./ui";
 
 type Mode = "explore" | "path";
 
@@ -13,6 +15,7 @@ export function App() {
   const [mode, setMode] = useState<Mode>("explore");
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [detail, setDetail] = useState<EntityDetail | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const detailToken = useRef(0);
@@ -29,6 +32,7 @@ export function App() {
   const [focused, setFocused] = useState(0);
   const [pathKind, setPathKind] = useState<PathKind>("shortest");
   const [pathSeed, setPathSeed] = useState(() => Date.now());
+  const pathAvoid = useRef<string | null>(null);
   const [pathPayload, setPathPayload] = useState<PathPayload | null>(null);
   const [pathError, setPathError] = useState<string | null>(null);
 
@@ -72,6 +76,10 @@ export function App() {
   }, [seeds, exploreTarget, graphCap]);
 
   useEffect(() => {
+    pathAvoid.current = null;
+  }, [stops, pathKind]);
+
+  useEffect(() => {
     const ready = stops.filter((stop): stop is SearchHit => stop != null);
     if (ready.length < 2) {
       setPathPayload(null);
@@ -79,11 +87,13 @@ export function App() {
     }
     let cancelled = false;
     setPathError(null);
+    const avoid = pathKind === "random" ? pathAvoid.current : null;
     api
       .path(
         ready.map(({ type, id }) => ({ type, id })),
         pathKind,
         pathSeed,
+        avoid ?? undefined,
       )
       .then((payload) => {
         if (!cancelled) setPathPayload(payload);
@@ -97,6 +107,42 @@ export function App() {
       cancelled = true;
     };
   }, [stops, pathKind, pathSeed]);
+
+  function startPath(node: { entityType: EntityType; discogsId: number; name: string }) {
+    setQuery("");
+    setHits([]);
+    setStops([
+      {
+        type: node.entityType,
+        id: node.discogsId,
+        name: node.name,
+        thumbUrl: null,
+        disambiguator: null,
+      },
+      null,
+    ]);
+    setFocused(1);
+    setPathError(null);
+    setPathPayload(null);
+    setMode("path");
+    void openDetail(node.entityType, node.discogsId);
+  }
+
+  function exploreNode(node: { entityType: EntityType; discogsId: number; name: string }) {
+    setQuery("");
+    setHits([]);
+    setSeeds([
+      {
+        type: node.entityType,
+        id: node.discogsId,
+        name: node.name,
+        thumbUrl: null,
+        disambiguator: null,
+      },
+    ]);
+    setMode("explore");
+    void openDetail(node.entityType, node.discogsId);
+  }
 
   async function addSeed(hit: SearchHit) {
     setQuery("");
@@ -175,15 +221,16 @@ export function App() {
     pathError === "same_clique"
       ? "Those are the same artist (aliases)."
       : stops.some((stop) => stop == null)
-        ? "Pick two entities."
+        ? "Pick two entities to find a path from A to B."
         : pathPayload && pathPayload.shortestHops == null
           ? `No catalog path within ${pathPayload.limit} hops.`
           : pathPayload && pathPayload.nodes.length === 0
-            ? "No catalog path within 12 hops."
-            : "Pick two entities.";
+            ? `No catalog path within ${pathPayload.limit} hops.`
+            : "Pick two entities to find a path from A to B.";
 
   return (
-    <div className="page">
+    <PlayerProvider onOpen={(type, id) => void openDetail(type, id)}>
+      <div className="page">
       <header>
         <h1>DANCE INFORMATION SYSTEMS</h1>
         <div className="toggle mode-toggle" role="tablist" aria-label="Mode">
@@ -191,33 +238,42 @@ export function App() {
             Explore
           </button>
           <button type="button" role="tab" aria-selected={mode === "path"} onClick={() => setMode("path")}>
-            Path finder
+            Pathfinder
           </button>
         </div>
       </header>
       <main>
         <section className="panel">
-          <label className="search">
-            <span>Search artists, labels, or releases</span>
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Workshop, Lawrence, Werk" />
-          </label>
-          {hits.length > 0 && (
-            <ul className="hits">
-              {hits.map((hit) => (
-                <li key={`${hit.type}:${hit.id}`}>
-                  <button type="button" onClick={() => (mode === "explore" ? addSeed(hit) : fillStop(hit))}>
-                    <Thumb url={hit.thumbUrl} name={hit.name} type={hit.type} />
-                    <span>
-                      <strong>{hit.name}</strong>
-                      <small>
-                        {hit.type}
-                        {hit.disambiguator ? ` · ${hit.disambiguator}` : ""}
-                      </small>
-                    </span>
-                  </button>
-                </li>
-              ))}
-            </ul>
+          {mode === "explore" && (
+            <>
+              <label className="search">
+                <span>Search artists, labels, or releases to add to the graph as a seed</span>
+                <span className="search-field">
+                  <input
+                    value={query}
+                    onChange={(event) => setQuery(event.target.value)}
+                    onFocus={() => setSearchOpen(true)}
+                    onBlur={() => setSearchOpen(false)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Escape") {
+                        event.currentTarget.blur();
+                        return;
+                      }
+                      if (event.key === "Enter" && searchOpen && hits[0]) {
+                        event.preventDefault();
+                        void addSeed(hits[0]);
+                      }
+                    }}
+                    placeholder="Workshop, Lawrence, Werk"
+                    aria-expanded={searchOpen && hits.length > 0}
+                    aria-autocomplete="list"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                  {searchOpen && <SearchSuggest hits={hits} onPick={(hit) => void addSeed(hit)} />}
+                </span>
+              </label>
+            </>
           )}
           {mode === "explore" ? (
             <ExplorePanel
@@ -237,13 +293,17 @@ export function App() {
               payload={pathPayload}
               error={pathError}
               onFocus={setFocused}
+              onPick={(hit, index) => void fillStop(hit, index)}
               onClear={(index) => {
                 setStops((current) => current.map((stop, slot) => (slot === index ? null : stop)));
                 setFocused(index);
                 setPathError(null);
               }}
               onKind={setPathKind}
-              onRegenerate={() => setPathSeed(Date.now())}
+              onRegenerate={() => {
+                pathAvoid.current = pathPayload?.nodes.map((node) => node.id).join(">") ?? null;
+                setPathSeed(Date.now());
+              }}
               onOpen={(type, id) => void openDetail(type, id)}
             />
           )}
@@ -264,7 +324,22 @@ export function App() {
               nodeCap={nodeCap}
               onNodeCapChange={setNodeCap}
               onSelect={(type, id) => void openDetail(type, id)}
+              onToggleSeed={(node) => {
+                if (node.seed) {
+                  setSeeds((current) => current.filter((seed) => !(seed.type === node.entityType && seed.id === node.discogsId)));
+                  return;
+                }
+                void addSeed({
+                  type: node.entityType,
+                  id: node.discogsId,
+                  name: node.name,
+                  thumbUrl: null,
+                  disambiguator: null,
+                });
+              }}
+              relatedType={exploreTarget}
               emptyMessage="Add a seed to draw the neighborhood."
+              onStartPath={startPath}
             />
           ) : (
             <GraphView
@@ -273,16 +348,15 @@ export function App() {
               nodeCap={nodeCap}
               onNodeCapChange={setNodeCap}
               onSelect={(type, id) => void openDetail(type, id)}
+              onExploreNode={exploreNode}
               emptyMessage={pathEmpty}
               showNodeCap={false}
               layout="path"
             />
           )}
-          <p className="map-note">
-            {mode === "explore" ? "Proximity is an approximation of similarity." : "This is a catalog path, not a similarity score."}
-          </p>
         </section>
       </main>
-    </div>
+      </div>
+    </PlayerProvider>
   );
 }
