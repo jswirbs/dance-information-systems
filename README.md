@@ -1,6 +1,6 @@
 # Dance information systems
 
-A graph-based exploration tool for electronic music. It maps and visualizes networks connecting artists, labels, and releases. It uses Discogs data, ingested into a graph in Neo4j, which the site queries and displays.
+A graph-based exploration tool for electronic music. It maps and visualizes the networks connecting artists, labels, and releases. It currently uses Discogs data as the source.
 
 **Explore** mode starts from one or more seed nodes and lists related artists, labels, or releases. A row ranks higher when it shares more connections with the seeds (the shared links and reasoning for the similarity score are explained clearly). The same neighborhood is drawn as a graph.
 
