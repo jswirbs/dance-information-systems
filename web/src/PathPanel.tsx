@@ -1,12 +1,12 @@
-import { useEffect, useLayoutEffect, useRef, useState, type FocusEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FocusEvent } from "react";
 import { PATH_MAX_HOPS } from "../../src/shared/constants";
 import type { EntityType, PathKind, PathPayload, PathTrack, SearchHit } from "../../src/shared/types";
 import { api } from "./api";
 import { PauseIcon, PlayIcon, warmupYouTube } from "./PathPlayer";
-import { playingTitle, usePlayer } from "./player";
+import { usePlayback, type Playable } from "./player";
 import { SearchSuggest } from "./SearchSuggest";
+import { Ellipsis } from "./ellipsis";
 import { ScrollList, Thumb } from "./ui";
-import { resolveYouTubeId } from "./youtubeResolve";
 
 const SLOT_LABELS = ["A", "B"];
 const PATH_SOURCE = "path";
@@ -17,6 +17,7 @@ export function PathPanel({
   kind,
   payload,
   error,
+  loading,
   onFocus,
   onPick,
   onClear,
@@ -29,6 +30,7 @@ export function PathPanel({
   kind: PathKind;
   payload: PathPayload | null;
   error: string | null;
+  loading: boolean;
   onFocus: (index: number) => void;
   onPick: (hit: SearchHit, index: number) => void;
   onClear: (index: number) => void;
@@ -36,27 +38,34 @@ export function PathPanel({
   onRegenerate: () => void;
   onOpen: (type: EntityType, id: number) => void;
 }) {
-  const player = usePlayer();
-  const playerRef = useRef(player);
-  playerRef.current = player;
   const [queries, setQueries] = useState(["", ""]);
   const [active, setActive] = useState<number | null>(null);
   const [hits, setHits] = useState<SearchHit[]>([]);
   const [spin, setSpin] = useState(0);
   const [hitSlot, setHitSlot] = useState<number | null>(null);
+  const [searchedQuery, setSearchedQuery] = useState<string | null>(null);
   const inputs = useRef<Array<HTMLInputElement | null>>([]);
-  const [resolving, setResolving] = useState<number | null>(null);
-  const [failed, setFailed] = useState<number[]>([]);
   const ready = stops.every((stop) => stop != null);
-  const empty = emptyCopy(stops, payload, error);
+  const empty = emptyCopy(stops, payload, error, loading);
   const rows = payload?.rows ?? [];
   const tracks = payload?.tracks ?? [];
   const thumbs = new Map(rows.filter((row) => row.type === "release").map((row) => [row.id, row.thumbUrl]));
-  const cache = useRef(new Map<number, string | null>());
-  const tracksRef = useRef(tracks);
-  const resolvingRef = useRef<number | null>(null);
-  tracksRef.current = tracks;
-  const session = player.session?.source === PATH_SOURCE ? player.session : null;
+  const items = useMemo<Playable[]>(
+    () =>
+      (payload?.tracks ?? []).map((track) => ({
+        key: `${track.hopIndex}:${track.releaseId}:${track.title}`,
+        title: track.title,
+        artists: track.artistName?.trim() ? [{ id: track.artistId, name: track.artistName }] : [],
+        releaseId: track.releaseId,
+        releaseName: track.releaseName,
+        meta: [track.position, track.duration].filter(Boolean).join(" · ") || null,
+        videoSrc: track.videoSrc,
+        searchQuery: track.searchQuery,
+      })),
+    [payload],
+  );
+  const playback = usePlayback(PATH_SOURCE, items);
+  const { session, resolving, failed, playAt } = playback;
 
   useEffect(() => {
     if (stops[focused] == null) setActive(focused);
@@ -70,9 +79,10 @@ export function PathPanel({
   useEffect(() => {
     if (active == null) return;
     const query = queries[active]?.trim() ?? "";
-    if (query.length < 2) {
+    if (query.length < 1) {
       setHits([]);
       setHitSlot(active);
+      setSearchedQuery(null);
       return;
     }
     let cancelled = false;
@@ -84,11 +94,13 @@ export function PathPanel({
           if (cancelled) return;
           setHits(next);
           setHitSlot(slot);
+          setSearchedQuery(query);
         })
         .catch(() => {
           if (cancelled) return;
           setHits([]);
           setHitSlot(slot);
+          setSearchedQuery(null);
         });
     }, 200);
     return () => {
@@ -96,6 +108,10 @@ export function PathPanel({
       clearTimeout(handle);
     };
   }, [active, queries]);
+
+  useEffect(() => {
+    if (tracks.length > 0) warmupYouTube();
+  }, [tracks.length]);
 
   function focusSlot(index: number) {
     onFocus(index);
@@ -107,6 +123,7 @@ export function PathPanel({
     setQueries((current) => current.map((item, slot) => (slot === index ? "" : item)));
     setHits([]);
     setHitSlot(null);
+    setSearchedQuery(null);
     setActive(null);
   }
 
@@ -117,96 +134,9 @@ export function PathPanel({
     setQueries((current) => current.map((item, slot) => (slot === index ? "" : item)));
     setHits([]);
     setHitSlot(null);
+    setSearchedQuery(null);
     setActive((current) => (current === index ? null : current));
   }
-
-  const trackKey = tracks.map((track) => `${track.hopIndex}:${track.releaseId}:${track.title}`).join("|");
-  const prevTrackKey = useRef<string | null>(null);
-  useEffect(() => {
-    cache.current.clear();
-    if (prevTrackKey.current != null && prevTrackKey.current !== trackKey) {
-      playerRef.current.stop(PATH_SOURCE);
-    }
-    prevTrackKey.current = trackKey;
-    setResolving(null);
-    resolvingRef.current = null;
-    setFailed([]);
-  }, [trackKey]);
-
-  useEffect(() => {
-    if (tracks.length > 0) warmupYouTube();
-  }, [tracks.length]);
-
-  async function resolveVideo(track: PathTrack): Promise<string | null> {
-    if (cache.current.has(track.hopIndex)) return cache.current.get(track.hopIndex) ?? null;
-    const videoId = await resolveYouTubeId(track.videoSrc, track.searchQuery);
-    cache.current.set(track.hopIndex, videoId);
-    return videoId;
-  }
-
-  async function playAt(index: number) {
-    if (resolvingRef.current === index) return;
-    const current = playerRef.current.session;
-    if (current?.source === PATH_SOURCE && current.index === index) {
-      playerRef.current.setPaused(!current.paused);
-      return;
-    }
-    await loadAt(index);
-  }
-
-  async function loadAt(index: number): Promise<boolean> {
-    const track = tracksRef.current[index];
-    if (!track) return false;
-    resolvingRef.current = index;
-    setResolving(index);
-    const videoId = await resolveVideo(track);
-    resolvingRef.current = null;
-    setResolving(null);
-    if (!videoId) {
-      setFailed((current) => (current.includes(index) ? current : [...current, index]));
-      return false;
-    }
-    playerRef.current.play({
-      source: PATH_SOURCE,
-      index,
-      videoId,
-      title: playingTitle(track.title, track.artistName),
-      releaseId: track.releaseId,
-      releaseName: track.releaseName,
-      meta: [track.position, track.duration].filter(Boolean).join(" · ") || null,
-      canPrev: index > 0,
-      canNext: index < tracksRef.current.length - 1,
-    });
-    return true;
-  }
-
-  async function skipFrom(fromIndex: number, step: 1 | -1, closeIfNone: boolean) {
-    const list = tracksRef.current;
-    for (let index = fromIndex + step; index >= 0 && index < list.length; index += step) {
-      if (await loadAt(index)) return;
-    }
-    if (closeIfNone) playerRef.current.stop(PATH_SOURCE);
-  }
-
-  const skipFromRef = useRef(skipFrom);
-  skipFromRef.current = skipFrom;
-
-  useEffect(() => {
-    return player.bind(PATH_SOURCE, {
-      prev: () => {
-        const current = playerRef.current.session;
-        if (current?.source === PATH_SOURCE) void skipFromRef.current(current.index, -1, false);
-      },
-      next: () => {
-        const current = playerRef.current.session;
-        if (current?.source === PATH_SOURCE) void skipFromRef.current(current.index, 1, false);
-      },
-      ended: () => {
-        const current = playerRef.current.session;
-        if (current?.source === PATH_SOURCE) void skipFromRef.current(current.index, 1, true);
-      },
-    });
-  }, [player.bind]);
 
   return (
     <>
@@ -214,7 +144,8 @@ export function PathPanel({
         {stops.map((stop, index) => {
           const label = SLOT_LABELS[index] ?? String(index + 1);
           const searching = active === index || stop == null;
-          const open = active === index && hitSlot === index && hits.length > 0;
+          const typed = (queries[index]?.trim() ?? "").length > 0;
+          const open = active === index && hitSlot === index && searchedQuery != null && typed;
           return (
             <div
               key={label}
@@ -245,9 +176,10 @@ export function PathPanel({
                     onChange={(event) => {
                       const value = event.target.value;
                       setQueries((current) => current.map((item, slot) => (slot === index ? value : item)));
-                      if (value.trim().length < 2) {
+                      if (value.trim().length < 1) {
                         setHits([]);
                         setHitSlot(index);
+                        setSearchedQuery(null);
                       }
                     }}
                     onKeyDown={(event) => {
@@ -280,6 +212,7 @@ export function PathPanel({
                     setQueries((current) => current.map((item, slot) => (slot === index ? "" : item)));
                     setHits([]);
                     setHitSlot(null);
+                    setSearchedQuery(null);
                     setActive(index);
                   }}
                 >
@@ -318,8 +251,11 @@ export function PathPanel({
       <section className="path-playlist">
         <h2>{stops[0] && stops[1] ? `Playlist from ${stops[0].name} to ${stops[1].name}` : "Playlist"}</h2>
         {empty ? (
-          <div className="path-empty">
-            <p>{empty.title}</p>
+          <div className={`path-empty${empty.tone === "plain" ? "" : " loading-note"}`}>
+            <p>
+              {empty.title}
+              {empty.tone === "loading" ? <Ellipsis /> : null}
+            </p>
             {empty.detail && <p className="path-empty-detail">{empty.detail}</p>}
           </div>
         ) : tracks.length === 0 ? (
@@ -411,7 +347,7 @@ function PlaylistRow({
         disabled={busy}
         aria-label={busy ? "Finding video" : missing && !active ? "No video found" : showPause ? "Pause" : "Play"}
       >
-        {busy ? "…" : showPause ? <PauseIcon /> : <PlayIcon />}
+        {busy ? <Ellipsis /> : showPause ? <PauseIcon /> : <PlayIcon />}
       </button>
       <Thumb url={thumbUrl} name={track.releaseName} type="release" />
       <span className="playlist-copy">
@@ -458,15 +394,27 @@ function emptyCopy(
   stops: Array<SearchHit | null>,
   payload: PathPayload | null,
   error: string | null,
-): { title: string; detail?: string } | null {
-  if (error === "same_clique") return { title: "Those are the same artist (aliases)." };
-  if (error) return { title: error };
-  if (stops.some((stop) => stop == null)) return { title: "Pick two entities to find a path from A to B." };
-  if (payload && payload.shortestHops == null) {
+  loading: boolean,
+): { title: string; detail?: string; tone: "plain" | "loading" | "error" } | null {
+  const problem = pathProblemTitle(error);
+  if (problem) return { title: problem, tone: "error" };
+  if (stops.some((stop) => stop == null)) return { title: "Pick two entities to find a path from A to B.", tone: "plain" };
+  if (loading) return { title: "Searching the catalog", tone: "loading" };
+  if (payload && (payload.shortestHops == null || payload.nodes.length === 0)) {
     return {
       title: `No catalog path within ${payload.limit ?? PATH_MAX_HOPS} hops.`,
       detail: `They may still be connected by a longer chain; this mode only searches up to ${payload.limit ?? PATH_MAX_HOPS}.`,
+      tone: "error",
     };
   }
+  return null;
+}
+
+export function pathProblemTitle(error: string | null): string | null {
+  if (error === "same_clique") return "Those are the same artist (aliases).";
+  if (error === "same_label") return "That label is already the other stop.";
+  if (error === "same_release") return "That release is already the other stop.";
+  if (error === "timeout") return "The path search timed out.";
+  if (error) return "The path search failed.";
   return null;
 }

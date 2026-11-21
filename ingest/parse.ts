@@ -1,5 +1,6 @@
-import { SaxesParser, type SaxesTagPlain } from "saxes";
+import { StringDecoder } from "node:string_decoder";
 import type { Readable } from "node:stream";
+import { SaxesParser, type SaxesTagPlain } from "saxes";
 import type { ArtistRecord, LabelRecord, NamedRef, ReleaseArtist, ReleaseRecord } from "./records.js";
 
 type XmlNode = {
@@ -21,8 +22,10 @@ const RECORD_PARENT: Record<string, string> = {
   release: "releases",
 };
 
+/** Stream one Discogs dump. Each top-level record is handled before the next one is parsed. */
 export async function parseDiscogs(stream: Readable, handlers: ParseHandlers): Promise<void> {
   const parser = new SaxesParser({ xmlns: false });
+  const decoder = new StringDecoder("utf8");
   const stack: XmlNode[] = [];
   let pending: Promise<void> = Promise.resolve();
 
@@ -51,21 +54,41 @@ export async function parseDiscogs(stream: Readable, handlers: ParseHandlers): P
   });
 
   await new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const fail = (error: unknown) => {
+      if (settled) return;
+      settled = true;
+      stream.destroy();
+      reject(error);
+    };
+    const succeed = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
     stream.on("data", (chunk: Buffer | string) => {
       stream.pause();
       try {
-        parser.write(typeof chunk === "string" ? chunk : chunk.toString("utf8"));
+        const text = typeof chunk === "string" ? chunk : decoder.write(chunk);
+        if (text) parser.write(text);
       } catch (error) {
-        reject(error);
+        fail(error);
         return;
       }
-      void pending.then(() => stream.resume()).catch(reject);
+      void pending.then(() => stream.resume()).catch(fail);
     });
     stream.on("end", () => {
-      parser.close();
-      void pending.then(() => resolve()).catch(reject);
+      try {
+        const rest = decoder.end();
+        if (rest) parser.write(rest);
+        parser.close();
+      } catch (error) {
+        fail(error);
+        return;
+      }
+      void pending.then(succeed).catch(fail);
     });
-    stream.on("error", reject);
+    stream.on("error", fail);
   });
 }
 

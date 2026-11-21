@@ -1,4 +1,5 @@
 import { asNumber, asString, withSession } from "../src/db.js";
+import { parseJson } from "./cypher.js";
 import type { Credit, EntityType, GraphLinkKind, PathTrack, Track, VideoLink } from "../src/shared/types.js";
 import { parseYouTubeId, titlesMatch } from "../src/shared/youtube.js";
 import { closureIds } from "./queries.js";
@@ -117,11 +118,3 @@ function matchingVideoSrc(videos: VideoLink[], trackTitle: string): string | nul
   return null;
 }
 
-function parseJson<T>(value: unknown, fallback: T): T {
-  if (typeof value !== "string") return fallback;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
-}

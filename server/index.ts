@@ -5,7 +5,7 @@ import { DEFAULT_NODE_CAP, MAX_NODE_CAP, MIN_NODE_CAP } from "../src/shared/cons
 import type { EntityType, PathKind, Seed } from "../src/shared/types.js";
 import { graphFor } from "./graph.js";
 import { ensureImage } from "./images.js";
-import { catalogPath, PathRequestError } from "./path.js";
+import { catalogPath, isQueryTimeout, PathRequestError } from "./path.js";
 import { entityDetail, related, search } from "./queries.js";
 import { searchYouTube } from "./youtube.js";
 
@@ -36,6 +36,7 @@ app.post("/api/path", async (c) => {
     return c.json(await catalogPath(stops, kind, seed, avoid));
   } catch (error) {
     if (error instanceof PathRequestError) return c.json({ error: error.code }, 400);
+    if (isQueryTimeout(error)) return c.json({ error: "timeout" }, 504);
     throw error;
   }
 });

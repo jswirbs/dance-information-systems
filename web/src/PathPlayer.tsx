@@ -267,8 +267,6 @@ function formatTime(seconds: number): string {
   return `${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
-export const PathPlayer = YouTubePlayer;
-
 export function PlayIcon() {
   return (
     <svg viewBox="0 0 24 24" aria-hidden="true">

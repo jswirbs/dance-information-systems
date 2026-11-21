@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { EntityType, RelatedRow, SearchHit } from "../../src/shared/types";
+import { Ellipsis } from "./ellipsis";
 import { ScrollList, Thumb } from "./ui";
 
 const TARGETS: EntityType[] = ["artist", "label", "release"];
@@ -9,6 +10,7 @@ export function ExplorePanel({
   target,
   rows,
   error,
+  loading,
   onRemoveSeed,
   onTarget,
   onOpen,
@@ -17,6 +19,7 @@ export function ExplorePanel({
   target: EntityType;
   rows: RelatedRow[];
   error: string | null;
+  loading: boolean;
   onRemoveSeed: (seed: SearchHit) => void;
   onTarget: (target: EntityType) => void;
   onOpen: (type: EntityType, id: number) => void;
@@ -44,6 +47,12 @@ export function ExplorePanel({
         ))}
       </div>
       {error && <p className="error">{error}</p>}
+      {loading && !error && (
+        <p className="loading-note">
+          Loading the neighborhood
+          <Ellipsis />
+        </p>
+      )}
       <ScrollList count={rows.length}>
         <ul className="rows related-rows">
           {rows.map((row) => (

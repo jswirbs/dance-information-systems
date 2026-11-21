@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { DEFAULT_NODE_CAP } from "../../src/shared/constants";
-import type { EntityDetail, EntityType, GraphPayload, PathKind, PathPayload, RelatedRow, SearchHit, Seed } from "../../src/shared/types";
+import type { AboutMention, EntityDetail, EntityType, GraphPayload, PathKind, PathPayload, RelatedRow, SearchHit, Seed } from "../../src/shared/types";
 import { ApiError, api } from "./api";
 import { ExplorePanel } from "./ExplorePanel";
 import { GraphView } from "./GraphView";
-import { PathPanel } from "./PathPanel";
+import { PathPanel, pathProblemTitle } from "./PathPanel";
 import { PlayerProvider } from "./player";
 import { SearchSuggest } from "./SearchSuggest";
-import { Detail } from "./ui";
+import { Detail, MissingDetail } from "./ui";
 
 type Mode = "explore" | "path";
 
@@ -15,8 +15,11 @@ export function App() {
   const [mode, setMode] = useState<Mode>("explore");
   const [query, setQuery] = useState("");
   const [hits, setHits] = useState<SearchHit[]>([]);
+  const [searchError, setSearchError] = useState<string | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
+  const [searchedQuery, setSearchedQuery] = useState<string | null>(null);
   const [detail, setDetail] = useState<EntityDetail | null>(null);
+  const [missing, setMissing] = useState<AboutMention | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const detailToken = useRef(0);
 
@@ -25,6 +28,7 @@ export function App() {
   const [rows, setRows] = useState<RelatedRow[]>([]);
   const [graph, setGraph] = useState<GraphPayload | null>(null);
   const [exploreError, setExploreError] = useState<string | null>(null);
+  const [exploreLoading, setExploreLoading] = useState(false);
   const [nodeCap, setNodeCap] = useState(DEFAULT_NODE_CAP);
   const [graphCap, setGraphCap] = useState(DEFAULT_NODE_CAP);
 
@@ -35,6 +39,8 @@ export function App() {
   const pathAvoid = useRef<string | null>(null);
   const [pathPayload, setPathPayload] = useState<PathPayload | null>(null);
   const [pathError, setPathError] = useState<string | null>(null);
+  const [pathLoading, setPathLoading] = useState(false);
+  const detailRef = useRef<EntityDetail | null>(null);
 
   useEffect(() => {
     const handle = setTimeout(() => setGraphCap(nodeCap), 250);
@@ -42,33 +48,62 @@ export function App() {
   }, [nodeCap]);
 
   useEffect(() => {
-    if (query.trim().length < 2) {
+    const q = query.trim();
+    if (q.length < 1) {
       setHits([]);
+      setSearchError(null);
+      setSearchedQuery(null);
       return;
     }
+    let cancelled = false;
     const handle = setTimeout(() => {
-      api.search(query.trim()).then(setHits).catch((reason) => setExploreError(String(reason)));
+      api
+        .search(q)
+        .then((next) => {
+          if (cancelled) return;
+          setHits(next);
+          setSearchError(null);
+          setSearchedQuery(q);
+        })
+        .catch((reason) => {
+          if (cancelled) return;
+          setHits([]);
+          setSearchedQuery(null);
+          setSearchError(reason instanceof Error ? reason.message : String(reason));
+        });
     }, 200);
-    return () => clearTimeout(handle);
+    return () => {
+      cancelled = true;
+      clearTimeout(handle);
+    };
   }, [query]);
 
   useEffect(() => {
     if (seeds.length === 0) {
       setRows([]);
       setGraph(null);
+      setExploreLoading(false);
       return;
     }
     const body: Seed[] = seeds.map(({ type, id }) => ({ type, id }));
     let cancelled = false;
     setExploreError(null);
+    setExploreLoading(true);
+    setRows([]);
+    setGraph(null);
     Promise.all([api.related(body, exploreTarget), api.graph(body, exploreTarget, graphCap)])
       .then(([nextRows, nextGraph]) => {
         if (cancelled) return;
         setRows(nextRows);
         setGraph(nextGraph);
+        setExploreLoading(false);
       })
       .catch((reason) => {
-        if (!cancelled) setExploreError(String(reason));
+        if (cancelled) return;
+        setRows([]);
+        setGraph(null);
+        setExploreError(reason instanceof Error ? reason.message : String(reason));
+        setExploreLoading(false);
       });
     return () => {
       cancelled = true;
@@ -83,10 +118,13 @@ export function App() {
     const ready = stops.filter((stop): stop is SearchHit => stop != null);
     if (ready.length < 2) {
       setPathPayload(null);
+      setPathLoading(false);
       return;
     }
     let cancelled = false;
     setPathError(null);
+    setPathLoading(true);
+    setPathPayload(null);
     const avoid = pathKind === "random" ? pathAvoid.current : null;
     api
       .path(
@@ -96,12 +134,15 @@ export function App() {
         avoid ?? undefined,
       )
       .then((payload) => {
-        if (!cancelled) setPathPayload(payload);
+        if (cancelled) return;
+        setPathPayload(payload);
+        setPathLoading(false);
       })
       .catch((reason) => {
         if (cancelled) return;
         setPathPayload(null);
-        setPathError(reason instanceof ApiError ? reason.code : String(reason));
+        setPathLoading(false);
+        setPathError(reason instanceof ApiError ? reason.code : "failed");
       });
     return () => {
       cancelled = true;
@@ -174,7 +215,7 @@ export function App() {
     } else {
       const other = stops.find((stop, slot) => slot !== index && stop?.type === hit.type && stop.id === hit.id);
       if (other) {
-        setPathError("same_clique");
+        setPathError(hit.type === "label" ? "same_label" : "same_release");
         return;
       }
     }
@@ -187,13 +228,52 @@ export function App() {
   async function openDetail(type: EntityType, id: number) {
     const token = ++detailToken.current;
     setSelectedId(`${type}:${id}`);
-    const record = await api.entity(type, id);
-    if (token !== detailToken.current) return;
-    setDetail(record);
-    if (record.imageCount <= 0 || record.imageUrl || record.thumbUrl) return;
-    const image = await api.image(type, id);
-    if (token !== detailToken.current) return;
-    if (image.imageUrl) setDetail({ ...record, imageUrl: image.imageUrl, thumbUrl: image.thumbUrl });
+    try {
+      const record = await api.entity(type, id);
+      if (token !== detailToken.current) return;
+      detailRef.current = record;
+      setMissing(null);
+      setDetail(record);
+      if (record.imageCount <= 0 || record.imageUrl || record.thumbUrl) return;
+      try {
+        const image = await api.image(type, id);
+        if (token !== detailToken.current) return;
+        if (image.imageUrl) {
+          const next = { ...record, imageUrl: image.imageUrl, thumbUrl: image.thumbUrl };
+          detailRef.current = next;
+          setDetail(next);
+        }
+      } catch {
+        // The article is already showing. A missing image can wait for the next open.
+      }
+    } catch (error) {
+      if (token !== detailToken.current) return;
+      if (error instanceof ApiError && error.status === 404) {
+        detailRef.current = null;
+        setDetail(null);
+        setSelectedId(null);
+        setMissing({ entity: type, id, name: `${type} ${id}`, inCatalog: false });
+        return;
+      }
+      const loaded = detailRef.current;
+      setSelectedId(loaded ? `${loaded.type}:${loaded.id}` : null);
+    }
+  }
+
+  function showMissing(mention: AboutMention) {
+    detailToken.current += 1;
+    detailRef.current = null;
+    setDetail(null);
+    setSelectedId(null);
+    setMissing(mention);
+  }
+
+  function openMention(mention: AboutMention) {
+    if (mention.inCatalog && mention.id != null && mention.entity !== "master") {
+      void openDetail(mention.entity, mention.id);
+      return;
+    }
+    showMissing(mention);
   }
 
   const detailIsSeed =
@@ -217,16 +297,18 @@ export function App() {
   }
 
   const pathGraph: GraphPayload | null = pathPayload ? { nodes: pathPayload.nodes, links: pathPayload.links } : null;
+  const pathProblem = pathProblemTitle(pathError);
+  const pathWaiting = stops.some((stop) => stop == null);
+  const pathMissing = pathPayload != null && (pathPayload.shortestHops == null || pathPayload.nodes.length === 0);
   const pathEmpty =
-    pathError === "same_clique"
-      ? "Those are the same artist (aliases)."
-      : stops.some((stop) => stop == null)
-        ? "Pick two entities to find a path from A to B."
-        : pathPayload && pathPayload.shortestHops == null
+    pathProblem ??
+    (pathWaiting
+      ? "Pick two entities to find a path from A to B."
+      : pathLoading
+        ? "Searching the catalog"
+        : pathMissing
           ? `No catalog path within ${pathPayload.limit} hops.`
-          : pathPayload && pathPayload.nodes.length === 0
-            ? `No catalog path within ${pathPayload.limit} hops.`
-            : "Pick two entities to find a path from A to B.";
+          : "Pick two entities to find a path from A to B.");
 
   return (
     <PlayerProvider onOpen={(type, id) => void openDetail(type, id)}>
@@ -265,14 +347,17 @@ export function App() {
                       }
                     }}
                     placeholder="Workshop, Lawrence, Werk"
-                    aria-expanded={searchOpen && hits.length > 0}
+                    aria-expanded={searchOpen && searchedQuery != null && query.trim().length > 0}
                     aria-autocomplete="list"
                     autoComplete="off"
                     spellCheck={false}
                   />
-                  {searchOpen && <SearchSuggest hits={hits} onPick={(hit) => void addSeed(hit)} />}
+                  {searchOpen && searchedQuery != null && query.trim().length > 0 && (
+                    <SearchSuggest hits={hits} onPick={(hit) => void addSeed(hit)} />
+                  )}
                 </span>
               </label>
+              {searchError && <p className="error">{searchError}</p>}
             </>
           )}
           {mode === "explore" ? (
@@ -281,6 +366,7 @@ export function App() {
               target={exploreTarget}
               rows={rows}
               error={exploreError}
+              loading={exploreLoading}
               onRemoveSeed={(seed) => setSeeds((current) => current.filter((item) => item !== seed))}
               onTarget={setExploreTarget}
               onOpen={(type, id) => void openDetail(type, id)}
@@ -292,6 +378,7 @@ export function App() {
               kind={pathKind}
               payload={pathPayload}
               error={pathError}
+              loading={pathLoading}
               onFocus={setFocused}
               onPick={(hit, index) => void fillStop(hit, index)}
               onClear={(index) => {
@@ -313,8 +400,10 @@ export function App() {
               useLabel={mode === "explore" ? (detailIsSeed ? "Remove seed" : "Use as seed") : null}
               onUse={useFromDetail}
               onOpen={(type, id) => void openDetail(type, id)}
+              onMention={openMention}
             />
           )}
+          {!detail && missing && <MissingDetail mention={missing} />}
         </section>
         <section className="map">
           {mode === "explore" ? (
@@ -338,6 +427,7 @@ export function App() {
                 });
               }}
               relatedType={exploreTarget}
+              loading={exploreLoading}
               emptyMessage="Add a seed to draw the neighborhood."
               onStartPath={startPath}
             />
@@ -350,6 +440,8 @@ export function App() {
               onSelect={(type, id) => void openDetail(type, id)}
               onExploreNode={exploreNode}
               emptyMessage={pathEmpty}
+              emptyItalic={pathProblem != null || pathMissing}
+              loading={pathLoading}
               showNodeCap={false}
               layout="path"
             />

@@ -2,7 +2,13 @@ import type { SearchHit } from "../../src/shared/types";
 import { Thumb } from "./ui";
 
 export function SearchSuggest({ hits, onPick }: { hits: SearchHit[]; onPick: (hit: SearchHit) => void }) {
-  if (hits.length === 0) return null;
+  if (hits.length === 0) {
+    return (
+      <div className="search-suggest search-suggest-empty" role="status">
+        No results found
+      </div>
+    );
+  }
   return (
     <ul className="search-suggest" role="listbox">
       {hits.map((hit) => (

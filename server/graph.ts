@@ -1,8 +1,10 @@
 import { asNumber, asString, withSession } from "../src/db.js";
 import { DEFAULT_NODE_CAP, MAX_NODE_CAP, MIN_NODE_CAP } from "../src/shared/constants.js";
 import type { EntityType, GraphLink, GraphNode, GraphPayload, Seed } from "../src/shared/types.js";
+import { mainReleaseOrder, masterKey, neoLabel } from "./cypher.js";
 import { dedupeAliasSeeds, relatedDetailed } from "./queries.js";
 
+/** Neighborhood map: related rows, their bridges, then structural edges. `nodeCap` limits nodes added after the seeds. */
 export async function graphFor(seeds: Seed[], target: EntityType, nodeCap = DEFAULT_NODE_CAP): Promise<GraphPayload> {
   const cap = Math.min(MAX_NODE_CAP, Math.max(MIN_NODE_CAP, Math.round(nodeCap)));
   seeds = await dedupeAliasSeeds(seeds);
@@ -84,9 +86,9 @@ async function addStructuralLinks(
          WHERE l.discogsId IN $labelIds
          WITH shown, l, r, type(c) AS credit
          ORDER BY CASE WHEN r.discogsId IN $seedReleaseIds THEN 1 ELSE 0 END DESC,
-                  coalesce(r.isMainRelease, false) DESC, r.discogsId ASC
+                  ${mainReleaseOrder("r")}
          WITH shown, l,
-              CASE WHEN coalesce(r.masterId, 0) > 0 THEN 'master:' + toString(r.masterId) ELSE 'release:' + toString(r.discogsId) END AS masterKey,
+              ${masterKey("r")} AS masterKey,
               collect({release: r, credit: credit}) AS items
          WITH shown, l, head(items) AS chosen, items
          WITH shown, l, chosen.release AS r, [item IN items WHERE item.release = chosen.release | item.credit] AS credits
@@ -179,10 +181,12 @@ function isCredit(credit: string): credit is "PRIMARY_ON" | "APPEARS_ON" | "REMI
 }
 
 async function lookupCard(seed: Seed): Promise<{ name: string; year: number | null }> {
-  const label = seed.type === "artist" ? "Artist" : seed.type === "label" ? "Label" : "Release";
   const field = seed.type === "release" ? "n.title" : "n.name";
   return withSession(async (session) => {
-    const result = await session.run(`MATCH (n:${label} {discogsId: $id}) RETURN ${field} AS name, n.year AS year`, { id: seed.id });
+    const result = await session.run(
+      `MATCH (n:${neoLabel(seed.type)} {discogsId: $id}) RETURN ${field} AS name, n.year AS year`,
+      { id: seed.id },
+    );
     const record = result.records[0];
     if (!record) return { name: String(seed.id), year: null };
     return { name: String(record.get("name")), year: asNumber(record.get("year")) };

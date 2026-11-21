@@ -1,6 +1,8 @@
 import type { Record as NeoRecord } from "neo4j-driver";
 import { asNumber, asString, asStrings, withSession } from "../src/db.js";
 import type { EntityDetail, EntityType, IssuedLabel, RelatedRow, SearchHit, Seed } from "../src/shared/types.js";
+import { aboutFromDiscogs } from "./discogsText.js";
+import { ARTIST_CLOSURE, mainReleaseOrder, masterKey, neoLabel, parseJson } from "./cypher.js";
 import {
   catalogLine,
   creditSentence,
@@ -81,6 +83,7 @@ type Bucket = {
   partials: { seed: Seed; score: number }[];
 };
 
+/** Merge one neighborhood per seed. Direct release lists score 1 per seed and then sort by year. */
 export async function relatedDetailed(seeds: Seed[], target: EntityType, limit = 25): Promise<DetailedRow[]> {
   seeds = await dedupeAliasSeeds(seeds);
   const excluded = new Set<string>();
@@ -142,7 +145,7 @@ export async function relatedDetailed(seeds: Seed[], target: EntityType, limit =
         partials: row.partials.filter((partial) => partial.score > 0),
       };
     })
-    .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+    .sort((a, b) => b.score - a.score || (b.year ?? -1) - (a.year ?? -1) || a.name.localeCompare(b.name))
     .slice(0, limit);
 }
 
@@ -183,7 +186,8 @@ async function similarLabels(id: number, seedName: string): Promise<Hit[]> {
   const family = await run(
     `MATCH (seed:Label {discogsId: $id})
      MATCH (other:Label)
-     WHERE (other)-[:SUBLABEL_OF]->(seed) OR (seed)-[:SUBLABEL_OF]->(other)
+     WHERE coalesce(other.denied, false) = false
+       AND ((other)-[:SUBLABEL_OF]->(seed) OR (seed)-[:SUBLABEL_OF]->(other))
      RETURN other.discogsId AS id, other.name AS name, other.thumbUrl AS thumbUrl,
             CASE WHEN (other)-[:SUBLABEL_OF]->(seed) THEN 'sublabel' ELSE 'parent' END AS relation`,
     { id },
@@ -229,9 +233,7 @@ async function similarLabels(id: number, seedName: string): Promise<Hit[]> {
 
 async function similarArtists(id: number, seedName: string): Promise<Hit[]> {
   const labels = await run(
-    `MATCH (seed:Artist {discogsId: $id})
-     OPTIONAL MATCH (seed)-[:ALIAS_OF]-(alias:Artist)
-     WITH [n IN collect(DISTINCT seed) + collect(DISTINCT alias) WHERE n IS NOT NULL] AS closure
+    `${ARTIST_CLOSURE}
      UNWIND closure AS s
      MATCH (s)-[c:PRIMARY_ON|APPEARS_ON]->(r:Release)<-[:ISSUED]-(l:Label)
      WHERE coalesce(l.denied, false) = false
@@ -253,15 +255,13 @@ async function similarArtists(id: number, seedName: string): Promise<Hit[]> {
     { id },
   );
   const sharedReleases = await run(
-    `MATCH (seed:Artist {discogsId: $id})
-     OPTIONAL MATCH (seed)-[:ALIAS_OF]-(alias:Artist)
-     WITH [n IN collect(DISTINCT seed) + collect(DISTINCT alias) WHERE n IS NOT NULL] AS closure
+    `${ARTIST_CLOSURE}
      UNWIND closure AS s
      MATCH (s)-[c:PRIMARY_ON|APPEARS_ON|REMIXED]->(r:Release)<-[c2:PRIMARY_ON|APPEARS_ON|REMIXED]-(other:Artist)
      WHERE NOT other IN closure AND coalesce(other.bridge, false) = false
      WITH other, CASE WHEN coalesce(r.masterId, 0) > 0 THEN r.masterId ELSE r.discogsId END AS masterKey,
           head(collect(r.title)) AS title,
-          max(CASE WHEN c:REMIXED OR c2:REMIXED THEN 1 ELSE 0 END) AS remix
+          max(CASE WHEN (c:REMIXED AND c.role = 'Remix') OR (c2:REMIXED AND c2.role = 'Remix') THEN 1 ELSE 0 END) AS remix
      WITH other, collect({id: masterKey, title: title, remix: remix = 1}) AS releases
      RETURN other.discogsId AS id, other.name AS name, other.thumbUrl AS thumbUrl,
             releases, toFloat(size(releases)) * 2.0 AS score`,
@@ -325,8 +325,8 @@ async function similarReleases(id: number, seedName: string): Promise<Hit[]> {
        MATCH (l)-[:ISSUED]->(other:Release)
        WHERE other <> seed AND (coalesce(seed.masterId, 0) <= 0 OR coalesce(other.masterId, 0) <= 0 OR other.masterId <> seed.masterId)
        WITH other, collect(DISTINCT {id: l.discogsId, name: l.name, weight: 1}) AS labels
-       ORDER BY coalesce(other.isMainRelease, false) DESC, other.discogsId ASC
-       WITH CASE WHEN coalesce(other.masterId, 0) > 0 THEN 'master:' + toString(other.masterId) ELSE 'release:' + toString(other.discogsId) END AS masterKey,
+       ORDER BY ${mainReleaseOrder("other")}
+       WITH ${masterKey("other")} AS masterKey,
             collect(other) AS pressings, collect(labels) AS labelSets
        WITH head(pressings) AS other, head(labelSets) AS labels
        RETURN other.discogsId AS id, other.title AS name, other.thumbUrl AS thumbUrl,
@@ -340,8 +340,8 @@ async function similarReleases(id: number, seedName: string): Promise<Hit[]> {
        MATCH (a)-[:PRIMARY_ON]->(other:Release)
        WHERE other <> seed AND (coalesce(seed.masterId, 0) <= 0 OR coalesce(other.masterId, 0) <= 0 OR other.masterId <> seed.masterId)
        WITH other, collect(DISTINCT {id: a.discogsId, name: a.name, weight: 1}) AS artists
-       ORDER BY coalesce(other.isMainRelease, false) DESC, other.discogsId ASC
-       WITH CASE WHEN coalesce(other.masterId, 0) > 0 THEN 'master:' + toString(other.masterId) ELSE 'release:' + toString(other.discogsId) END AS masterKey,
+       ORDER BY ${mainReleaseOrder("other")}
+       WITH ${masterKey("other")} AS masterKey,
             collect(other) AS pressings, collect(artists) AS artistSets
        WITH head(pressings) AS other, head(artistSets) AS artists
        RETURN other.discogsId AS id, other.title AS name, other.thumbUrl AS thumbUrl,
@@ -363,8 +363,8 @@ async function similarReleases(id: number, seedName: string): Promise<Hit[]> {
        WITH other, artists, rank,
             size([style IN coalesce(seed.styles, []) WHERE style IN coalesce(other.styles, [])]) AS styleOverlap,
             CASE WHEN seed.year IS NULL OR other.year IS NULL OR abs(seed.year - other.year) > 3 THEN 0 ELSE 1 END AS yearClose
-       ORDER BY rank + toFloat(styleOverlap) DESC, yearClose DESC, coalesce(other.isMainRelease, false) DESC, other.discogsId ASC
-       WITH CASE WHEN coalesce(other.masterId, 0) > 0 THEN 'master:' + toString(other.masterId) ELSE 'release:' + toString(other.discogsId) END AS masterKey,
+       ORDER BY rank + toFloat(styleOverlap) DESC, yearClose DESC, ${mainReleaseOrder("other")}
+       WITH ${masterKey("other")} AS masterKey,
             collect(other) AS pressings, collect(artists) AS artistSets, collect(rank + toFloat(styleOverlap)) AS ranks
        WITH head(pressings) AS other, head(artistSets) AS artists, head(ranks) AS rank
        ORDER BY rank DESC
@@ -496,7 +496,7 @@ async function artistsOnLabel(id: number, seedName: string): Promise<Hit[]> {
   const records = await run(
     `MATCH (l:Label {discogsId: $id})-[:ISSUED]->(r:Release)<-[:PRIMARY_ON|APPEARS_ON|REMIXED]-(a:Artist)
      WHERE coalesce(a.bridge, false) = false
-     WITH a, count(DISTINCT CASE WHEN coalesce(r.masterId, 0) > 0 THEN 'master:' + toString(r.masterId) ELSE 'release:' + toString(r.discogsId) END) AS releases,
+     WITH a, count(DISTINCT ${masterKey("r")}) AS releases,
           min(r.year) AS fromYear, max(r.year) AS toYear
      RETURN a.discogsId AS id, a.name AS name, a.thumbUrl AS thumbUrl, releases, fromYear, toYear`,
     { id },
@@ -514,8 +514,8 @@ async function artistsOnLabel(id: number, seedName: string): Promise<Hit[]> {
 async function releasesOnLabel(id: number, seedName: string): Promise<Hit[]> {
   const records = await run(
     `MATCH (l:Label {discogsId: $id})-[edge:ISSUED]->(r:Release)
-     ORDER BY coalesce(r.isMainRelease, false) DESC, r.discogsId ASC
-     WITH CASE WHEN coalesce(r.masterId, 0) > 0 THEN 'master:' + toString(r.masterId) ELSE 'release:' + toString(r.discogsId) END AS masterKey,
+     ORDER BY ${mainReleaseOrder("r")}
+     WITH ${masterKey("r")} AS masterKey,
           collect(r) AS pressings, collect(edge) AS edges
      WITH head(pressings) AS r, head(edges) AS edge
      RETURN r.discogsId AS id, r.title AS name, r.thumbUrl AS thumbUrl,
@@ -525,7 +525,7 @@ async function releasesOnLabel(id: number, seedName: string): Promise<Hit[]> {
   );
   return records.map((record) => {
     const year = numOrNull(record, "year");
-    const hit = baseHit("release", record, year ?? 0, {
+    const hit = baseHit("release", record, 1, {
       seedName,
       direct: catalogLine(asString(record.get("catno")), year),
     });
@@ -539,12 +539,10 @@ async function releasesOnLabel(id: number, seedName: string): Promise<Hit[]> {
 
 async function labelsForArtist(id: number, seedName: string): Promise<Hit[]> {
   const records = await run(
-    `MATCH (seed:Artist {discogsId: $id})
-     OPTIONAL MATCH (seed)-[:ALIAS_OF]-(alias:Artist)
-     WITH [n IN collect(DISTINCT seed) + collect(DISTINCT alias) WHERE n IS NOT NULL] AS closure
+    `${ARTIST_CLOSURE}
      UNWIND closure AS s
      MATCH (s)-[:PRIMARY_ON|APPEARS_ON|REMIXED]->(r:Release)<-[:ISSUED]-(l:Label)
-     WITH l, count(DISTINCT CASE WHEN coalesce(r.masterId, 0) > 0 THEN 'master:' + toString(r.masterId) ELSE 'release:' + toString(r.discogsId) END) AS releases,
+     WITH l, count(DISTINCT ${masterKey("r")}) AS releases,
           min(r.year) AS fromYear, max(r.year) AS toYear
      RETURN l.discogsId AS id, l.name AS name, l.thumbUrl AS thumbUrl, releases, fromYear, toYear`,
     { id },
@@ -561,14 +559,12 @@ async function labelsForArtist(id: number, seedName: string): Promise<Hit[]> {
 
 async function releasesForArtist(id: number, seedName: string): Promise<Hit[]> {
   const records = await run(
-    `MATCH (seed:Artist {discogsId: $id})
-     OPTIONAL MATCH (seed)-[:ALIAS_OF]-(alias:Artist)
-     WITH [n IN collect(DISTINCT seed) + collect(DISTINCT alias) WHERE n IS NOT NULL] AS closure
+    `${ARTIST_CLOSURE}
      UNWIND closure AS s
      MATCH (s)-[c:PRIMARY_ON|APPEARS_ON|REMIXED]->(r:Release)
      WITH r, collect(DISTINCT c.role) AS roles
-     ORDER BY coalesce(r.isMainRelease, false) DESC, r.discogsId ASC
-     WITH CASE WHEN coalesce(r.masterId, 0) > 0 THEN 'master:' + toString(r.masterId) ELSE 'release:' + toString(r.discogsId) END AS masterKey,
+     ORDER BY ${mainReleaseOrder("r")}
+     WITH ${masterKey("r")} AS masterKey,
           collect(r) AS pressings, collect(roles) AS roleSets
      WITH head(pressings) AS r, reduce(acc = [], rs IN roleSets | acc + rs) AS roles
      RETURN r.discogsId AS id, r.title AS name, r.thumbUrl AS thumbUrl,
@@ -578,7 +574,7 @@ async function releasesForArtist(id: number, seedName: string): Promise<Hit[]> {
   );
   return records.map((record) => {
     const year = numOrNull(record, "year");
-    const hit = baseHit("release", record, year ?? 0, {
+    const hit = baseHit("release", record, 1, {
       seedName,
       direct: creditSentence([...new Set(asStrings(record.get("roles")))], Boolean(record.get("compilation"))),
     });
@@ -628,6 +624,14 @@ export async function entityDetail(type: EntityType, id: number): Promise<Entity
   const node = records[0]?.get("n");
   if (!node) return null;
   const props = node.properties as Record<string, unknown>;
+  const profile = asString(props.profile);
+  const notes = asString(props.notes);
+  const [aliases, parent, labels, about] = await Promise.all([
+    type === "artist" ? artistAliases(id) : Promise.resolve([]),
+    type === "label" ? labelParent(id) : Promise.resolve(null),
+    type === "release" ? releaseLabels(id) : Promise.resolve([]),
+    aboutFromDiscogs(profile || notes),
+  ]);
   return {
     type,
     id,
@@ -636,7 +640,7 @@ export async function entityDetail(type: EntityType, id: number): Promise<Entity
     thumbUrl: asString(props.thumbUrl),
     imageCount: asNumber(props.imageCount) ?? 0,
     realname: asString(props.realname),
-    profile: asString(props.profile),
+    profile,
     contactInfo: asString(props.contactInfo),
     dataQuality: asString(props.dataQuality),
     nameVariations: asStrings(props.nameVariations),
@@ -644,7 +648,7 @@ export async function entityDetail(type: EntityType, id: number): Promise<Entity
     country: asString(props.country),
     released: asString(props.released),
     year: asNumber(props.year),
-    notes: asString(props.notes),
+    notes,
     genres: asStrings(props.genres),
     styles: asStrings(props.styles),
     formatNames: asStrings(props.formatNames),
@@ -656,10 +660,11 @@ export async function entityDetail(type: EntityType, id: number): Promise<Entity
     identifiers: parseJson(props.identifiers, []),
     masterId: asNumber(props.masterId),
     isMainRelease: props.isMainRelease == null ? null : Boolean(props.isMainRelease),
-    aliases: type === "artist" ? await artistAliases(id) : [],
-    parent: type === "label" ? await labelParent(id) : null,
-    labels: type === "release" ? await releaseLabels(id) : [],
+    aliases,
+    parent,
+    labels,
     creditedArtists: [],
+    about,
   };
 }
 
@@ -838,12 +843,6 @@ function uniqueBridges(bridges: { type: EntityType; id: number; name: string }[]
   });
 }
 
-function neoLabel(type: EntityType): string {
-  if (type === "artist") return "Artist";
-  if (type === "label") return "Label";
-  return "Release";
-}
-
 function num(record: NeoRecord, key: string): number {
   return asNumber(record.get(key)) ?? 0;
 }
@@ -854,15 +853,6 @@ function numOrNull(record: NeoRecord, key: string): number | null {
 
 function round(value: number): number {
   return Math.round(value * 1000) / 1000;
-}
-
-function parseJson<T>(value: unknown, fallback: T): T {
-  if (typeof value !== "string" || value.length === 0) return fallback;
-  try {
-    return JSON.parse(value) as T;
-  } catch {
-    return fallback;
-  }
 }
 
 function toLucene(q: string): string {

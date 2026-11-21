@@ -33,6 +33,7 @@ export function isDeniedLabel(name: string, config: FilterConfig): boolean {
   );
 }
 
+/** Keep accepted electronic releases in the style list, plus anything on a seed label. */
 export function keepRelease(release: ReleaseRecord, config: FilterConfig): boolean {
   // The monthly dump leaves status off and only includes accepted releases. The fixture still sets Deleted.
   if (release.status && release.status !== "Accepted") return false;

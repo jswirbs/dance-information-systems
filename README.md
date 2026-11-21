@@ -1,17 +1,36 @@
 # Dance information systems
 
-A local explorer for how artists, labels, and releases connect in Discogs. Similarity is a count of shared neighbors, with the bridges written out on each row.
+A graph-based exploration tool for electronic music. It maps and visualizes networks connecting artists, labels, and releases. It uses Discogs data, ingested into a graph in Neo4j, which the site queries and displays.
 
-The graph lives in **Neo4j**, not in Postgres or a file the API reads directly. Search, related lists, and Pathfinder are Cypher over that database.
+**Explore** mode starts from one or more seed nodes and lists related artists, labels, or releases. A row ranks higher when it shares more connections with the seeds (the shared links and reasoning for the similarity score are explained clearly). The same neighborhood is drawn as a graph.
 
-## Daily run (this machine)
+**Pathfinder** mode starts from two entities and finds a route between them (the shortest one, or a longer random-ish one). Releases along the route become a playlist for that path.
 
-The Discogs dump was ingested into the **bundled** Neo4j under `.tools/`, about 18GB at `.tools/root/var/lib/neo4j/data`. Do not use Docker for that copy. Do not ingest again unless you mean to rebuild the graph.
+## Running
 
-Three processes, three terminals:
+You need Node, pnpm, and Docker.
+
+The first time, install dependencies and copy the env file. The defaults match the Neo4j user started by Compose.
 
 ```bash
-.tools/start-neo4j.sh
+pnpm install
+cp .env.example .env
+```
+
+Start the database and load a catalog, described in the two sections below. Pathfinder plays a Discogs YouTube URL when a release has one, and otherwise searches YouTube with [yt-dlp](https://github.com/yt-dlp/yt-dlp). Install it so the `yt-dlp` command is on your `PATH`:
+
+```bash
+brew install yt-dlp
+```
+
+Search hits are cached in `.cache/youtube-search.json`. If search starts failing, upgrade yt-dlp. This is for personal, local use.
+
+Cover images come from the Discogs API when a detail panel opens. Set `DISCOGS_TOKEN` in `.env` if you want them, however, the app runs without a token (just no images).
+
+After the first setup, each session is:
+
+```bash
+docker compose up -d
 pnpm dev:api
 pnpm dev:web
 ```
@@ -20,16 +39,30 @@ pnpm dev:web
 - API: http://127.0.0.1:8787
 - Neo4j Browser: http://localhost:7474 (`neo4j` / `discogs-graph`)
 
-Leave the Neo4j and API terminals open. `.env` points the API at `bolt://localhost:7687`.
+The API and the site each stay running in their own terminal. Neo4j stays up in the background. The API reads `NEO4J_URI` from `.env`, which defaults to `bolt://localhost:7687`.
 
-Pathfinder playlist search uses **yt-dlp** (`ytsearch1:`) when a release has no Discogs YouTube URL. Install once with `brew install yt-dlp`; if search starts failing, `brew upgrade yt-dlp`. Hits are cached in `.cache/youtube-search.json`. Personal/local use only.
+`pnpm explore Workshop` is optional. It prints the same related lists in the terminal.
 
-`pnpm explore Workshop` is optional: a CLI print of the same related lists, not a required start step.
+## Neo4j
 
-## Docker (empty database)
+`docker compose up -d` starts Neo4j 5 and stores the graph in a Docker volume, so the data is still there the next time you start it. Bolt is published on port 7687 and Browser on port 7474. The user is `neo4j` and the password is `discogs-graph`.
 
-`docker compose up -d` starts a **different** Neo4j with its own empty Docker volume. The README used to lead with that because it is how you would stand up a laptop that has no graph yet (`pnpm ingest --fixture` or `pnpm ingest --data data`). It is not how this checkout’s catalog is stored. Running Compose here does not see the 18GB under `.tools/`. Do not run Compose and `.tools/start-neo4j.sh` at the same time (both want port 7687).
+The volume starts empty, so load a catalog before you expect search to return anything. Compose needs ports 7474 and 7687 free.
 
-## A real dump
+## Loading a catalog
 
-Download instructions live in [data/README.md](data/README.md). `pnpm ingest --data data` writes into whichever Neo4j is listening on 7687 and replaces that graph.
+A small fixture is enough to check that the app is wired up:
+
+```bash
+pnpm ingest --fixture
+```
+
+For a real monthly dump, follow [data/README.md](data/README.md). Once the three gzip files for one month are in `data/`:
+
+```bash
+pnpm ingest --data data
+```
+
+Ingest connects to whatever is listening on port 7687 and replaces the graph in that database. It keeps electronic releases whose styles are listed in `config/styles.txt`, plus releases on a label in `config/seed-labels.txt`. Artists and labels are loaded from their own dumps, so aliases and sublabels exist even when no kept release mentions them.
+
+Run ingest again when you want to replace the catalog.

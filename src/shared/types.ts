@@ -22,6 +22,7 @@ export type RelatedRow = {
   type: EntityType;
   id: number;
   name: string;
+  /** Similarity weight. A direct catalog membership (a label's releases, an artist's discography) scores 1 per seed. */
   score: number;
   reason: string;
   reasons: ReasonPiece[];
@@ -144,6 +145,24 @@ export type Identifier = {
   description: string;
 };
 
+export type AboutMark = "bold" | "italic" | "underline" | "strike";
+
+export type AboutEntity = EntityType | "master";
+
+export type AboutMention = {
+  entity: AboutEntity;
+  /** Discogs id when the tag or URL names one. Null for an artist or label linked only by name that we could not find. */
+  id: number | null;
+  name: string;
+  inCatalog: boolean;
+};
+
+export type AboutRun =
+  | { kind: "text"; text: string }
+  | { kind: "mark"; mark: AboutMark; children: AboutRun[] }
+  | ({ kind: "mention" } & AboutMention)
+  | { kind: "url"; href: string; text: string };
+
 export type EntityDetail = {
   type: EntityType;
   id: number;
@@ -176,6 +195,8 @@ export type EntityDetail = {
   parent: AliasRef | null;
   labels: IssuedLabel[];
   creditedArtists: CreditedArtist[];
+  /** Profile, or release notes when there is no profile, with Discogs tags turned into mentions. */
+  about: AboutRun[] | null;
 };
 
 export type ImageResult = {

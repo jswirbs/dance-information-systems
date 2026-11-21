@@ -42,5 +42,10 @@ export function titlesMatch(trackTitle: string, videoTitle: string): boolean {
   const track = normalizeTitle(trackTitle);
   const video = normalizeTitle(videoTitle);
   if (!track || !video) return false;
-  return video === track || video.includes(track) || track.includes(video);
+  if (track === video) return true;
+  const shorter = track.length <= video.length ? track : video;
+  // A one-word title has to be the whole title. "go" must not match "go away".
+  if (!shorter.includes(" ") && shorter.length < 12) return false;
+  const longer = shorter === track ? video : track;
+  return longer.includes(shorter);
 }

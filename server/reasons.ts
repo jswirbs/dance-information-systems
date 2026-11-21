@@ -46,6 +46,7 @@ const ROSTER =
 const RELEASE =
   "Calculated from shared releases:\nA shared label counts 2.\nA shared primary artist counts 4.\nShared credits count 1, up to 3.\nA shared style counts 1, up to 3.\nReleases within 3 years count 1.";
 
+/** Turn per-seed pieces into the row sentence and the score tooltip. */
 export function formatReasons(pieces: ReasonInput[]): { reason: string; reasons: ReasonPiece[]; scoreNote: string } {
   const scoreNote = formatScoreNote(pieces);
   const reasons = pieces

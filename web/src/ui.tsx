@@ -1,5 +1,7 @@
+import { ImageGeneration, type ImageGenerationHandle } from "img-fx";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
-import type { AliasRef, Credit, EntityDetail, EntityType, IssuedLabel } from "../../src/shared/types";
+import { discogsMentionUrl } from "../../src/shared/discogsText";
+import type { AboutMention, AboutRun, AliasRef, Credit, EntityDetail, EntityType, IssuedLabel } from "../../src/shared/types";
 import { ReleaseTracks } from "./ReleaseTracks";
 
 export function ScrollList({ count, children }: { count: number; children: ReactNode }) {
@@ -38,20 +40,6 @@ function useHasMore(ref: RefObject<HTMLElement | null>, itemCount: number) {
     };
   }, [ref, itemCount]);
   return hasMore;
-}
-
-export function NameButtons({ items, onPick }: { items: { key: string; id: number; label: string }[]; onPick: (id: number) => void }) {
-  return items.map((item, index) => (
-    <Fragment key={item.key}>
-      {index > 0 ? " " : null}
-      <span className="name-with-comma">
-        <button type="button" className="text-button" onClick={() => onPick(item.id)}>
-          {item.label}
-        </button>
-        {index < items.length - 1 ? "," : null}
-      </span>
-    </Fragment>
-  ));
 }
 
 function AliasList({ aliases, onPick }: { aliases: AliasRef[]; onPick: (id: number) => void }) {
@@ -240,8 +228,50 @@ function labelItems(labels: IssuedLabel[]) {
 }
 
 export function Thumb({ url, name, type }: { url: string | null; name: string; type: EntityType }) {
-  if (url) return <img className="thumb" src={url} alt="" />;
+  if (url) return <LoadedImage url={url} className="thumb" />;
   return <span className={`thumb placeholder ${type}`}>{name.slice(0, 1)}</span>;
+}
+
+function LoadedImage({ url, className }: { url: string; className: string }) {
+  const ref = useRef<ImageGenerationHandle>(null);
+  const [failed, setFailed] = useState(false);
+  const [settled, setSettled] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+    setSettled(false);
+    let cancelled = false;
+    const img = new Image();
+    img.onload = () => {
+      if (!cancelled) ref.current?.triggerReveal({ hold: "manual" });
+    };
+    img.onerror = () => {
+      if (!cancelled) setFailed(true);
+    };
+    img.src = url;
+    return () => {
+      cancelled = true;
+    };
+  }, [url]);
+
+  if (failed) return <img className={className} src={url} alt="" />;
+  return (
+    <ImageGeneration
+      ref={ref}
+      className={className}
+      preset="pixels-organic"
+      theme="light"
+      cardBg="#ffffff"
+      images={url}
+      borderRadius={0}
+      paused={settled}
+      onCycle={(event) => {
+        if (event.phase === "visible") setSettled(true);
+      }}
+    >
+      <span className="image-load-box" />
+    </ImageGeneration>
+  );
 }
 
 export function Detail({
@@ -249,13 +279,16 @@ export function Detail({
   useLabel,
   onUse,
   onOpen,
+  onMention,
 }: {
   record: EntityDetail;
   useLabel: string | null;
   onUse: () => void;
   onOpen: (type: EntityType, id: number) => void;
+  onMention: (mention: AboutMention) => void;
 }) {
-  const blurb = record.profile || record.notes;
+  const about = record.about;
+  const hasAbout = about != null && about.length > 0;
   const image = record.imageUrl || record.thumbUrl;
   const artists = record.type === "release" ? mainArtists(record) : [];
   const released = formatReleased(record.released, record.year);
@@ -310,7 +343,11 @@ export function Detail({
   return (
     <article className="detail">
       <div className="detail-head">
-        {image ? <img src={image} alt="" /> : <span className={`thumb placeholder large ${record.type}`}>{record.name.slice(0, 1)}</span>}
+        {image ? (
+          <LoadedImage url={image} className="detail-image" />
+        ) : (
+          <span className={`thumb placeholder large ${record.type}`}>{record.name.slice(0, 1)}</span>
+        )}
         <div className="detail-copy">
           <p className="eyebrow">{record.type}</p>
           <h2>{record.name}</h2>
@@ -329,7 +366,7 @@ export function Detail({
           </p>
         </div>
       </div>
-      {(facts.length > 0 || blurb || record.tracklist.length > 0) && (
+      {(facts.length > 0 || hasAbout || record.tracklist.length > 0) && (
         <div className="detail-body">
           {facts.length > 0 && (
             <ul className="facts">
@@ -341,7 +378,11 @@ export function Detail({
               ))}
             </ul>
           )}
-          {blurb && <p className="blurb">{blurb}</p>}
+          {hasAbout && about && (
+            <p className="blurb">
+              <AboutView runs={about} onMention={onMention} />
+            </p>
+          )}
           {record.tracklist.length > 0 && <ReleaseTracks record={record} onOpen={onOpen} />}
         </div>
       )}
@@ -356,6 +397,59 @@ export function Detail({
       )}
     </article>
   );
+}
+
+export function MissingDetail({ mention }: { mention: AboutMention }) {
+  const placeholder = mention.entity === "master" ? "release" : mention.entity;
+  return (
+    <article className="detail">
+      <div className="detail-head">
+        <span className={`thumb placeholder large ${placeholder}`}>{mention.name.slice(0, 1)}</span>
+        <div className="detail-copy">
+          <p className="eyebrow">{mention.entity === "master" ? "master release" : mention.entity}</p>
+          <h2>{mention.name}</h2>
+          <p className="detail-actions">
+            <ExternalLink className="text-button" href={discogsMentionUrl(mention)}>
+              Discogs
+            </ExternalLink>
+          </p>
+        </div>
+      </div>
+      <p className="blurb">{missingCopy(mention.entity)}</p>
+    </article>
+  );
+}
+
+function missingCopy(entity: AboutMention["entity"]): string {
+  if (entity === "master") return "This master release isn't in the catalog.";
+  return `This ${entity} isn't in the catalog.`;
+}
+
+function AboutView({ runs, onMention }: { runs: AboutRun[]; onMention: (mention: AboutMention) => void }) {
+  return runs.map((run, index) => <AboutPiece key={index} run={run} onMention={onMention} />);
+}
+
+function AboutPiece({ run, onMention }: { run: AboutRun; onMention: (mention: AboutMention) => void }) {
+  if (run.kind === "text") return run.text;
+  if (run.kind === "url") {
+    return (
+      <a className="text-button" href={run.href} target="_blank" rel="noreferrer">
+        {run.text}
+      </a>
+    );
+  }
+  if (run.kind === "mention") {
+    return (
+      <button type="button" className="text-button" onClick={() => onMention(run)}>
+        {run.name}
+      </button>
+    );
+  }
+  const children = <AboutView runs={run.children} onMention={onMention} />;
+  if (run.mark === "bold") return <strong>{children}</strong>;
+  if (run.mark === "italic") return <em>{children}</em>;
+  if (run.mark === "underline") return <u>{children}</u>;
+  return <s>{children}</s>;
 }
 
 function ExternalLink({ href, className, children }: { href: string; className?: string; children: ReactNode }) {

@@ -10,8 +10,10 @@ import type {
   RelatedRow,
   Seed,
 } from "../src/shared/types.js";
+import { neoLabel } from "./cypher.js";
 import { tracksForWalk } from "./pathTracks.js";
 import { closureIds, lookupName } from "./queries.js";
+import { alignInteriorStops, joinWalks, type Walk } from "./walkJoin.js";
 
 const RELS = "ISSUED|PRIMARY_ON|APPEARS_ON|REMIXED|ALIAS_OF|SUBLABEL_OF|MEMBER_OF";
 
@@ -22,6 +24,14 @@ export class PathRequestError extends Error {
   ) {
     super(message);
   }
+}
+
+export function isQueryTimeout(error: unknown): boolean {
+  if (!error || typeof error !== "object") return false;
+  const code = "code" in error ? String(error.code) : "";
+  if (code.includes("TimedOut") || code.includes("Timeout")) return true;
+  const message = "message" in error ? String(error.message) : "";
+  return /timed?\s*out/i.test(message);
 }
 
 type WalkNode = {
@@ -35,12 +45,15 @@ type WalkNode = {
   styles: string[];
 };
 
-type WalkLink = { source: WalkNode; target: WalkNode; kind: GraphLinkKind; startId: number | null };
-
-type Walk = { nodes: WalkNode[]; links: WalkLink[] };
+type CatalogWalk = Walk<WalkNode>;
+type WalkLink = CatalogWalk["links"][number];
 
 const RANDOM_ATTEMPTS = 4;
 
+/**
+ * Shortest catalog walk between stops, or a longer walk in a corridor around it.
+ * Segments join on alias closure. Row `score` is the 1-based position along the walk.
+ */
 export async function catalogPath(stops: Seed[], kind: PathKind, seed = Date.now(), avoid?: string): Promise<PathPayload> {
   if (stops.length < 2) throw new PathRequestError("need_stops", "at least two stops are required");
   const closures = await Promise.all(stops.map((stop) => closureIds(stop)));
@@ -53,30 +66,32 @@ export async function catalogPath(stops: Seed[], kind: PathKind, seed = Date.now
   }
 
   const empty = emptyPath();
-  const shortestSegments: Walk[] = [];
+  const shortestSegments: CatalogWalk[] = [];
   for (let i = 0; i < stops.length - 1; i += 1) {
     const pair = await shortestPair(stops[i]!, stops[i + 1]!);
     if (!pair) return empty;
     shortestSegments.push(pair);
   }
-  const shortestJoined = joinWalks(shortestSegments);
+  const anchors = await interiorAnchors(stops);
+  const align = (segments: CatalogWalk[]) => alignInteriorStops(segments, anchors, closures);
+  const shortestJoined = joinWalks(align(shortestSegments));
   if (!shortestJoined) return empty;
   const shortestWalk = await attachTerminals(shortestJoined, stops);
   if (kind !== "random") return toPayload(shortestWalk, shortestWalk.links.length, stops);
 
   const attempts = avoid ? RANDOM_ATTEMPTS : 1;
-  let different: { walk: Walk; fellBack: boolean } | null = null;
-  let repeated: { walk: Walk; fellBack: boolean } | null = null;
+  let different: { walk: CatalogWalk; fellBack: boolean } | null = null;
+  let repeated: { walk: CatalogWalk; fellBack: boolean } | null = null;
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const trySeed = (seed + attempt * 0x9e3779b1) >>> 0;
-    const chosen: Walk[] = [];
+    const chosen: CatalogWalk[] = [];
     let fellBack = false;
     for (let i = 0; i < shortestSegments.length; i += 1) {
       const randomized = await randomizePair(shortestSegments[i]!, trySeed + i * 997);
       chosen.push(randomized.walk);
       if (randomized.fallback) fellBack = true;
     }
-    const chosenJoined = joinWalks(chosen);
+    const chosenJoined = joinWalks(align(chosen));
     if (!chosenJoined) continue;
     const walk = await attachTerminals(chosenJoined, stops);
     const signature = walk.nodes.map((node) => keyOf(node)).join(">");
@@ -88,7 +103,7 @@ export async function catalogPath(stops: Seed[], kind: PathKind, seed = Date.now
     if (!fellBack) break;
   }
   const chosenWalk = different ?? repeated;
-  if (!chosenWalk) return empty;
+  if (!chosenWalk) return toPayload(shortestWalk, shortestWalk.links.length, stops, "shortest");
   return toPayload(
     chosenWalk.walk,
     shortestWalk.links.length,
@@ -102,7 +117,7 @@ function emptyPath(): PathPayload {
   return { hops: null, shortestHops: null, limit: PATH_MAX_HOPS, nodes: [], links: [], rows: [], tracks: [] };
 }
 
-async function shortestPair(from: Seed, to: Seed): Promise<Walk | null> {
+async function shortestPair(from: Seed, to: Seed): Promise<CatalogWalk | null> {
   const [startIds, endIds] = await Promise.all([closureIds(from), closureIds(to)]);
   const records = await withSession(async (session) => {
     const result = await session.run(
@@ -156,7 +171,7 @@ type SeenEdge = { fromKey: string; to: WalkNode; kind: GraphLinkKind; startId: n
 // the end inside that corridor. The walk prefers steps that get closer, takes
 // a sideways or outward step often enough to leave the geodesic, and boosts
 // releases so the playlist has tracks.
-async function randomizePair(shortest: Walk, seed: number): Promise<{ walk: Walk; fallback: boolean }> {
+async function randomizePair(shortest: CatalogWalk, seed: number): Promise<{ walk: CatalogWalk; fallback: boolean }> {
   const n = shortest.links.length;
   const start = shortest.nodes[0];
   const end = shortest.nodes[shortest.nodes.length - 1];
@@ -181,7 +196,7 @@ async function randomizePair(shortest: Walk, seed: number): Promise<{ walk: Walk
   return { walk: { nodes, links }, fallback: false };
 }
 
-async function loadCorridor(shortest: Walk, random: () => number): Promise<Corridor> {
+async function loadCorridor(shortest: CatalogWalk, random: () => number): Promise<Corridor> {
   const corridor: Corridor = { nodes: new Map(), adj: new Map() };
   for (const node of shortest.nodes) corridor.nodes.set(keyOf(node), node);
   for (const link of shortest.links) connect(corridor, link.source, link.target, link.kind, link.startId);
@@ -436,7 +451,26 @@ function sample<T>(items: T[], count: number, random: () => number): T[] {
   return copy.slice(0, count);
 }
 
-async function attachTerminals(walk: Walk, stops: Seed[]): Promise<Walk> {
+async function interiorAnchors(stops: Seed[]): Promise<WalkNode[]> {
+  const anchors = stops.map(
+    (stop): WalkNode => ({
+      type: stop.type,
+      id: stop.id,
+      name: "",
+      thumbUrl: null,
+      year: null,
+      country: null,
+      genres: [],
+      styles: [],
+    }),
+  );
+  for (let index = 1; index < stops.length - 1; index += 1) {
+    anchors[index] = await describe(stops[index]!);
+  }
+  return anchors;
+}
+
+async function attachTerminals(walk: CatalogWalk, stops: Seed[]): Promise<CatalogWalk> {
   const first = stops[0]!;
   const last = stops[stops.length - 1]!;
   let nodes = [...walk.nodes];
@@ -479,34 +513,7 @@ async function describe(seed: Seed): Promise<WalkNode> {
   };
 }
 
-function joinWalks(segments: Walk[]): Walk | null {
-  if (segments.length === 0) return null;
-  const nodes = [...segments[0]!.nodes];
-  const links = [...segments[0]!.links];
-  for (const segment of segments.slice(1)) {
-    const joint = nodes[nodes.length - 1];
-    const head = segment.nodes[0];
-    if (!joint || !head || keyOf(joint) !== keyOf(head)) return null;
-    const seen = new Set(nodes.map(keyOf));
-    for (const node of segment.nodes.slice(1)) {
-      if (seen.has(keyOf(node))) return null;
-      nodes.push(node);
-    }
-    links.push(...segment.links);
-  }
-  return uniqueNodes(nodes) ? { nodes, links } : null;
-}
-
-function uniqueNodes(nodes: WalkNode[]): boolean {
-  const seen = new Set<string>();
-  for (const node of nodes) {
-    if (seen.has(keyOf(node))) return false;
-    seen.add(keyOf(node));
-  }
-  return true;
-}
-
-function walkFrom(rawNodes: unknown, rawKinds: unknown): Walk | null {
+function walkFrom(rawNodes: unknown, rawKinds: unknown): CatalogWalk | null {
   if (!Array.isArray(rawNodes) || !Array.isArray(rawKinds)) return null;
   const nodes = rawNodes.map(nodeFromProps).filter((node): node is WalkNode => node != null);
   if (nodes.length < 2 || rawKinds.length !== nodes.length - 1) return null;
@@ -575,7 +582,7 @@ function asLinkKind(value: unknown): GraphLinkKind | null {
 }
 
 async function toPayload(
-  walk: Walk,
+  walk: CatalogWalk,
   shortestHops: number,
   stops: Seed[],
   fallback?: "shortest",
@@ -655,12 +662,6 @@ function hopReason(previous: WalkNode, current: WalkNode, kind: GraphLinkKind, s
 
 function keyOf(node: { type: EntityType; id: number }): string {
   return `${node.type}:${node.id}`;
-}
-
-function neoLabel(type: EntityType): string {
-  if (type === "artist") return "Artist";
-  if (type === "label") return "Label";
-  return "Release";
 }
 
 function mulberry32(seed: number): () => number {

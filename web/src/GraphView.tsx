@@ -1,6 +1,8 @@
-import { forceCollide, forceRadial, forceX } from "d3-force";
+import { forceCollide, forceRadial } from "d3-force";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D, { type ForceGraphMethods } from "react-force-graph-2d";
+import { ThinkingOrb } from "thinking-orbs";
+import { orbGravity } from "./cursor";
 import { MAX_NODE_CAP, MIN_NODE_CAP } from "../../src/shared/constants";
 import type { EntityType, GraphLink, GraphNode, GraphPayload } from "../../src/shared/types";
 import { Popover } from "./Popover";
@@ -16,7 +18,7 @@ type SimLink = {
 
 type SimGraph = { nodes: DrawNode[]; links: SimLink[] };
 type PlainGraph = { nodes: GraphNode[]; links: GraphLink[] };
-type ExploreLayout = "proximity" | "columns" | "rings";
+type ExploreLayout = "proximity" | "rings";
 type GraphLayout = ExploreLayout | "path";
 type Strength = number | ((...args: never[]) => number);
 
@@ -39,17 +41,14 @@ const COLOR: Record<string, string> = {
 };
 
 const TYPES: EntityType[] = ["artist", "label", "release"];
-const COLUMN_ORDER: EntityType[] = ["artist", "release", "label"];
-const EXPLORE_LAYOUTS: ExploreLayout[] = ["proximity", "columns", "rings"];
-const LAYOUT_LABEL: Record<ExploreLayout, string> = { proximity: "Proximity", columns: "Columns", rings: "Rings" };
+const EXPLORE_LAYOUTS: ExploreLayout[] = ["proximity", "rings"];
+const LAYOUT_LABEL: Record<ExploreLayout, string> = { proximity: "Proximity", rings: "Rings" };
 const FOCUS_ZOOM = 2.4;
 const PATH_STEP = 150;
 const PATH_STAGGER = 36;
 const PATH_JITTER_X = 20;
 const PATH_JITTER_Y = 32;
 const PATH_CHAR_WIDTH = 6.4;
-const COLUMN_GAP = 320;
-const COLUMN_ROW = 24;
 const RING_ORDER: EntityType[] = ["artist", "label", "release"];
 const RING_GAP = 175;
 // Sibling spacing along a ring. Just past the collide diameter, so a fan stays put.
@@ -74,6 +73,8 @@ export function GraphView({
   showNodeCap = true,
   layout = "force",
   relatedType,
+  loading = false,
+  emptyItalic = false,
 }: {
   payload: GraphPayload | null;
   selectedId: string | null;
@@ -87,6 +88,8 @@ export function GraphView({
   showNodeCap?: boolean;
   layout?: "force" | "path";
   relatedType?: EntityType;
+  loading?: boolean;
+  emptyItalic?: boolean;
 }) {
   const ref = useRef<ForceGraphMethods | undefined>(undefined);
   const frameRef = useRef<HTMLDivElement>(null);
@@ -106,6 +109,14 @@ export function GraphView({
     data: { nodes: [], links: [] },
     cache: new Map(),
   });
+  const seedKey = payload?.nodes
+    .filter((node) => node.seed)
+    .map((node) => node.id)
+    .sort()
+    .join("|") ?? "";
+  useEffect(() => {
+    setRemoved([]);
+  }, [seedKey]);
   const focusedId = useRef<string | null>(null);
   const labelIds = useRef<Set<string> | null>(null);
   const hoverRef = useRef<string | null>(null);
@@ -155,31 +166,21 @@ export function GraphView({
     if (!ready || activeLayout === "path") return;
     const graph = ref.current;
     if (!graph) return;
-    // Columns and rings are the same simulation with a positioning force.
-    // Link strength stays low so those forces can hold the shape.
+    // Rings hold their shape with a positioning force, so link strength stays low.
     const linkForce = asForce(graph.d3Force("link"));
     const chargeForce = asForce(graph.d3Force("charge"));
     linkForce?.distance?.((link) => linkDistance(link, activeLayout));
-    if (activeLayout === "columns") {
-      const targets = columnCenters(data.nodes);
-      writeStrength(linkForce, 0.12);
-      writeStrength(chargeForce, -16);
-      putForce(graph, "x", forceX<DrawNode>((node) => targets.get(node.entityType) ?? 0).strength(0.9));
-      putForce(graph, "radial", null);
-      putForce(graph, "collide", forceCollide<DrawNode>(14));
-    } else if (activeLayout === "rings") {
+    if (activeLayout === "rings") {
       const radii = ringRadii(data.nodes, relatedType);
       writeStrength(linkForce, 0.012);
       writeStrength(chargeForce, -4);
       putForce(graph, "radial", forceRadial<DrawNode>((node) => ringRadius(node, radii), 0, 0).strength(0.95));
-      putForce(graph, "x", null);
       putForce(graph, "collide", forceCollide<DrawNode>(14));
     } else {
       // Similarity holds its rest length. Issued records and sublabels sit on their label; a credit only draws that clump toward the artist.
       // Rest lengths are longer than the collide diameter, so this only breaks up a pile, such as many artists on one seed.
       writeStrength(linkForce, ((link: SimLink) => proximityStrength(link)) as Strength);
       writeStrength(chargeForce, -22);
-      putForce(graph, "x", null);
       putForce(graph, "radial", null);
       putForce(graph, "collide", forceCollide<DrawNode>(14));
     }
@@ -203,7 +204,7 @@ export function GraphView({
   }, [selectedId, data.nodes, ready, activeLayout]);
 
   useEffect(() => {
-    if (activeLayout !== "columns" && activeLayout !== "rings") return;
+    if (activeLayout !== "rings") return;
     if (!ready || data.nodes.length === 0) return;
     let cancelled = false;
     const fit = () => {
@@ -301,7 +302,7 @@ export function GraphView({
             </fieldset>
             {showNodeCap && (
               <label className="graph-cap">
-                <span>Nodes {nodeCap}</span>
+                <span>Max nodes</span>
                 <input
                   type="range"
                   min={MIN_NODE_CAP}
@@ -310,6 +311,7 @@ export function GraphView({
                   value={nodeCap}
                   onChange={(event) => onNodeCapChange(Number(event.target.value))}
                 />
+                <span className="graph-cap-value">{nodeCap}</span>
               </label>
             )}
             <fieldset>
@@ -329,8 +331,14 @@ export function GraphView({
         </div>
       )}
       <div className="graph-frame" ref={frameRef}>
-        {!payload || data.nodes.length === 0 ? (
-          <div className="graph-empty">{payload && payload.nodes.length > 0 ? "No nodes to show." : emptyMessage}</div>
+        {loading ? (
+          <div className="graph-loading" role="status" aria-label={layout === "path" ? "Searching the catalog" : "Loading the neighborhood"}>
+            <ThinkingOrb state={layout === "path" ? "connecting" : "working"} size={64} theme="light" gravity={orbGravity()} />
+          </div>
+        ) : !payload || data.nodes.length === 0 ? (
+          <div className={`graph-empty${emptyItalic ? " loading-note" : ""}`}>
+            {payload && payload.nodes.length > 0 ? "No nodes to show." : emptyMessage}
+          </div>
         ) : ready ? (
           <ForceGraph2D
             ref={ref}
@@ -339,7 +347,7 @@ export function GraphView({
             graphData={data}
             backgroundColor="#ffffff"
             nodeId="id"
-            cooldownTicks={activeLayout === "columns" || activeLayout === "rings" ? 160 : 90}
+            cooldownTicks={activeLayout === "rings" ? 160 : 90}
             autoPauseRedraw={!fading}
             nodeLabel={activeLayout === "path" ? () => "" : (node) => nodePhrase(node as DrawNode)}
             linkLabel={(link) => linkPhrase(link as SimLink)}
@@ -475,7 +483,7 @@ export function GraphView({
 function readExploreLayout(): ExploreLayout {
   try {
     const value = sessionStorage.getItem(LAYOUT_KEY);
-    if (value === "columns" || value === "rings" || value === "proximity" || value === "force") {
+    if (value === "rings" || value === "proximity" || value === "force") {
       return value === "force" ? "proximity" : value;
     }
   } catch {
@@ -494,14 +502,14 @@ function projectGraph(payload: GraphPayload | null, removed: string[], visible: 
 }
 
 function graphSignature(graph: PlainGraph): string {
-  const nodes = graph.nodes.map((node) => `${node.id}\0${node.seed ? 1 : 0}`).sort().join("\n");
-  const links = graph.links.map((link) => `${link.kind}\0${link.source}\0${link.target}`).sort().join("\n");
+  const nodes = graph.nodes.map((node) => `${node.id}\0${node.seed ? 1 : 0}\0${node.name}`).sort().join("\n");
+  const links = graph.links.map((link) => `${link.kind}\0${link.source}\0${link.target}\0${link.score ?? ""}`).sort().join("\n");
   return `${nodes}\n~\n${links}`;
 }
 
 function orderedSignature(graph: PlainGraph): string {
-  const nodes = graph.nodes.map((node) => `${node.id}\0${node.seed ? 1 : 0}`).join("\n");
-  const links = graph.links.map((link) => `${link.kind}\0${link.source}\0${link.target}`).join("\n");
+  const nodes = graph.nodes.map((node) => `${node.id}\0${node.seed ? 1 : 0}\0${node.name}`).join("\n");
+  const links = graph.links.map((link) => `${link.kind}\0${link.source}\0${link.target}\0${link.score ?? ""}`).join("\n");
   return `${nodes}\n~\n${links}`;
 }
 
@@ -512,6 +520,10 @@ function adoptGraph(
   layoutChanged: boolean,
   focus?: EntityType,
 ): SimGraph {
+  const live = new Set(graph.nodes.map((node) => node.id));
+  for (const id of cache.keys()) {
+    if (!live.has(id)) cache.delete(id);
+  }
   const previousSeeds = new Set<string>();
   const nodes = graph.nodes.map((node) => {
     const taken = takeNode(node, cache);
@@ -557,10 +569,6 @@ function arrange(nodes: DrawNode[], links: GraphLink[], layout: ExploreLayout, f
   }
   if (layout === "proximity") {
     pinNewSeeds(nodes, new Set(), "row");
-    return;
-  }
-  if (layout === "columns") {
-    scatterColumns(nodes);
     return;
   }
   pinNewSeeds(nodes, new Set(), "center");
@@ -628,25 +636,6 @@ function unitHash(value: string): number {
   return (hash >>> 0) / 4294967296;
 }
 
-function scatterColumns(nodes: DrawNode[]) {
-  const centers = columnCenters(nodes);
-  const groups = new Map<EntityType, DrawNode[]>();
-  for (const node of nodes) {
-    const list = groups.get(node.entityType) ?? [];
-    list.push(node);
-    groups.set(node.entityType, list);
-  }
-  for (const [type, group] of groups) {
-    const x = centers.get(type) ?? 0;
-    group.forEach((node, index) => {
-      node.x = x;
-      node.y = (index - (group.length - 1) / 2) * COLUMN_ROW;
-      node.vx = 0;
-      node.vy = 0;
-    });
-  }
-}
-
 function scatterRings(nodes: DrawNode[], links: GraphLink[], focus?: EntityType) {
   const radii = ringRadii(nodes, focus);
   const order = ringOrder(focus).filter((type) => radii.has(type));
@@ -705,15 +694,6 @@ function placeAroundParents(
     setOnRing(node, gapCenter(seated.map(nodeAngle)), radius);
     seated.push(node);
   }
-}
-
-function columnCenters(nodes: DrawNode[]): Map<EntityType, number> {
-  const present = COLUMN_ORDER.filter((type) => nodes.some((node) => node.entityType === type));
-  const centers = new Map<EntityType, number>();
-  present.forEach((type, index) => {
-    centers.set(type, (index - (present.length - 1) / 2) * COLUMN_GAP);
-  });
-  return centers;
 }
 
 function ringOrder(focus?: EntityType): EntityType[] {
@@ -869,7 +849,6 @@ function fitPath(graph: ForceGraphMethods, nodes: DrawNode[], width: number, hei
 function placeNewcomers(nodes: DrawNode[], links: GraphLink[], layout: ExploreLayout, focus?: EntityType) {
   const placed = (node: DrawNode) => Number.isFinite(node.x) && Number.isFinite(node.y);
   if (!nodes.some(placed)) return;
-  const centers = layout === "columns" ? columnCenters(nodes) : null;
   const radii = layout === "rings" ? ringRadii(nodes, focus) : null;
   const byId = new Map(nodes.map((node) => [node.id, node]));
   let pending = nodes.filter((node) => node.fx == null && !placed(node));
@@ -885,14 +864,9 @@ function placeNewcomers(nodes: DrawNode[], links: GraphLink[], layout: ExploreLa
         next.push(node);
         continue;
       }
-      if (centers) {
-        node.x = centers.get(node.entityType) ?? anchor.x;
-        node.y = (anchor.y ?? 0) + COLUMN_ROW;
-      } else {
-        const angle = (byId.size - pending.length + next.length) * 2.4;
-        node.x = anchor.x! + Math.cos(angle) * 36;
-        node.y = anchor.y! + Math.sin(angle) * 36;
-      }
+      const angle = (byId.size - pending.length + next.length) * 2.4;
+      node.x = anchor.x! + Math.cos(angle) * 36;
+      node.y = anchor.y! + Math.sin(angle) * 36;
     }
     if (next.length === pending.length) break;
     pending = next;
@@ -902,27 +876,6 @@ function placeNewcomers(nodes: DrawNode[], links: GraphLink[], layout: ExploreLa
 function dropUnplaced(nodes: DrawNode[], links: GraphLink[], layout: ExploreLayout, focus?: EntityType) {
   const loose = nodes.filter((node) => !Number.isFinite(node.x) || !Number.isFinite(node.y));
   if (loose.length === 0 || layout === "proximity") return;
-  if (layout === "columns") {
-    const centers = columnCenters(nodes);
-    const byType = new Map<EntityType, DrawNode[]>();
-    for (const node of loose) {
-      const list = byType.get(node.entityType) ?? [];
-      list.push(node);
-      byType.set(node.entityType, list);
-    }
-    for (const [type, group] of byType) {
-      const x = centers.get(type) ?? 0;
-      const placedY = nodes
-        .filter((node) => node.entityType === type && !group.includes(node) && Number.isFinite(node.y))
-        .map((node) => node.y ?? 0);
-      const start = placedY.length > 0 ? Math.max(...placedY) + COLUMN_ROW : 0;
-      group.forEach((node, index) => {
-        node.x = x;
-        node.y = start + index * COLUMN_ROW;
-      });
-    }
-    return;
-  }
   const radii = ringRadii(nodes, focus);
   let pending = loose;
   for (let pass = 0; pass < nodes.length && pending.length > 0; pass++) {
@@ -1075,7 +1028,7 @@ function putForce(graph: ForceGraphMethods, name: string, force: object | null) 
 function linkDistance(link: SimLink, layout: GraphLayout): number {
   if (layout === "proximity") return proximityDistance(link);
   if (link.kind === "SIMILAR" && link.score) return Math.max(40, 150 / link.score);
-  return layout === "columns" ? 80 : 46;
+  return 46;
 }
 
 function proximityDistance(link: SimLink): number {
