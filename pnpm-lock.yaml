@@ -51,6 +51,9 @@ importers:
       react-force-graph-2d:
         specifier: ^1.29.0
         version: 1.29.2(react@19.3.1)
+      simple-icons:
+        specifier: ^16.38.0
+        version: 16.38.0
       thinking-orbs:
         specifier: ^0.3.2
         version: 0.3.2(react@19.3.1)
@@ -829,6 +832,10 @@ packages:
     resolution: {integrity: sha512-BR7VvDCVHO+q2xBEWskxS6DJE1qRnb7DxzUrogb71CWoSficBxYsiAGd+Kl0mmq/MprG9yArRkyrQxTO6XjMzA==}
     hasBin: true
 
+  simple-icons@16.38.0:
+    resolution: {integrity: sha512-B0Wws90eL0Fm65aH35CA8kM+7/Zzgsaytt0DndBx7VFm3+o9HurVIVRQZ1hvqqYYIyNJq7ycn3kQm2v2FhiWSQ==}
+    engines: {node: '>=0.12.18'}
+
   source-map-js@1.2.2:
     resolution: {integrity: sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw==}
     engines: {node: '>=0.10.0'}
@@ -1601,6 +1608,8 @@ snapshots:
   scheduler@0.28.0: {}
 
   semver@6.3.1: {}
+
+  simple-icons@16.38.0: {}
 
   source-map-js@1.2.2: {}
 

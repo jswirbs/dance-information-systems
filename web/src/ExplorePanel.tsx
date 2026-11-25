@@ -24,56 +24,66 @@ export function ExplorePanel({
   onTarget: (target: EntityType) => void;
   onOpen: (type: EntityType, id: number) => void;
 }) {
+  const showRelated = seeds.length > 0 || rows.length > 0;
   return (
     <>
-      <div className="chips">
-        {seeds.map((seed) => (
-          <button
-            key={`${seed.type}:${seed.id}`}
-            type="button"
-            className={`chip ${seed.type}`}
-            onClick={() => onRemoveSeed(seed)}
-          >
-            {seed.name}
-            <span aria-hidden="true"> ×</span>
-          </button>
-        ))}
-      </div>
-      <div className="toggle" role="tablist">
-        {TARGETS.map((item) => (
-          <button key={item} type="button" role="tab" aria-selected={target === item} onClick={() => onTarget(item)}>
-            related {item}s
-          </button>
-        ))}
-      </div>
-      {error && <p className="error">{error}</p>}
-      {loading && !error && (
-        <p className="loading-note">
-          Loading the neighborhood
-          <Ellipsis />
-        </p>
-      )}
-      <ScrollList count={rows.length}>
-        <ul className="rows related-rows">
-          {rows.map((row) => (
-            <li key={`${row.type}:${row.id}`}>
-              <button type="button" onClick={() => onOpen(row.type, row.id)}>
-                <Thumb url={row.thumbUrl} name={row.name} type={row.type} />
-                <span className="row-copy">
-                  <strong>
-                    <span className="row-name">{row.name}</span>
-                    {row.scoreNote && <ScoreMark value={row.score} note={row.scoreNote} />}
-                  </strong>
-                  <small>{row.reason}</small>
-                  {row.type === "release" && (
-                    <small className="meta">{[row.year, row.styles.slice(0, 3).join(", ")].filter(Boolean).join(" · ")}</small>
-                  )}
-                </span>
-              </button>
-            </li>
+      {seeds.length > 0 && (
+        <div className="chips">
+          {seeds.map((seed) => (
+            <button
+              key={`${seed.type}:${seed.id}`}
+              type="button"
+              className={`chip ${seed.type}`}
+              onClick={() => onRemoveSeed(seed)}
+            >
+              {seed.name}
+              <span aria-hidden="true"> ×</span>
+            </button>
           ))}
-        </ul>
-      </ScrollList>
+        </div>
+      )}
+      {showRelated && (
+        <>
+          <hr className="path-rule" />
+          <div className="toggle" role="tablist">
+            {TARGETS.map((item) => (
+              <button key={item} type="button" role="tab" aria-selected={target === item} onClick={() => onTarget(item)}>
+                related {item}s
+              </button>
+            ))}
+          </div>
+          {error && <p className="error">{error}</p>}
+          {loading && !error && (
+            <p className="loading-note">
+              Loading the neighborhood
+              <Ellipsis />
+            </p>
+          )}
+          {rows.length > 0 && (
+            <ScrollList count={rows.length}>
+              <ul className="rows related-rows">
+                {rows.map((row) => (
+                  <li key={`${row.type}:${row.id}`}>
+                    <button type="button" onClick={() => onOpen(row.type, row.id)}>
+                      <Thumb url={row.thumbUrl} name={row.name} type={row.type} />
+                      <span className="row-copy">
+                        <strong>
+                          <span className="row-name">{row.name}</span>
+                          {row.scoreNote && <ScoreMark value={row.score} note={row.scoreNote} />}
+                        </strong>
+                        <small>{row.reason}</small>
+                        {row.type === "release" && (
+                          <small className="meta">{[row.year, row.styles.slice(0, 3).join(", ")].filter(Boolean).join(" · ")}</small>
+                        )}
+                      </span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </ScrollList>
+          )}
+        </>
+      )}
     </>
   );
 }

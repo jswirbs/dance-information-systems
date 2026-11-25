@@ -1,8 +1,10 @@
 import { ImageGeneration, type ImageGenerationHandle } from "img-fx";
 import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { discogsMentionUrl } from "../../src/shared/discogsText";
+import { profileLinks, type ProfileLink } from "../../src/shared/siteLinks";
 import type { AboutMention, AboutRun, AliasRef, Credit, EntityDetail, EntityType, IssuedLabel } from "../../src/shared/types";
 import { ReleaseTracks } from "./ReleaseTracks";
+import { SiteIcon } from "./siteIcons";
 
 export function ScrollList({ count, children }: { count: number; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -386,17 +388,118 @@ export function Detail({
           {record.tracklist.length > 0 && <ReleaseTracks record={record} onOpen={onOpen} />}
         </div>
       )}
-      {record.urls.length > 0 && (
-        <ul className="urls">
-          {record.urls.map((url) => (
-            <li key={url}>
-              <ExternalLink href={url}>{url}</ExternalLink>
-            </li>
-          ))}
-        </ul>
-      )}
+      <SiteLinks key={`${record.type}:${record.id}`} urls={record.urls} />
     </article>
   );
+}
+
+function SiteLinks({ urls }: { urls: string[] }) {
+  const links = profileLinks(urls);
+  const signature = links.map((link) => link.key).join("\0");
+  const [expanded, setExpanded] = useState(false);
+  const [limit, setLimit] = useState<number | null>(null);
+  const measureRef = useRef<HTMLUListElement>(null);
+
+  useLayoutEffect(() => {
+    if (expanded) return;
+    const root = measureRef.current;
+    if (!root) return;
+    const update = () => setLimit(siteLinkLimit(root));
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(root);
+    return () => observer.disconnect();
+  }, [expanded, signature]);
+
+  if (links.length === 0) return null;
+  const shown = expanded || limit == null ? links : links.slice(0, limit);
+  const hidden = links.length - shown.length;
+
+  return (
+    <div className="site-links">
+      {!expanded && (
+        <ul className="urls urls-measure" ref={measureRef} aria-hidden="true">
+          {links.map((link) => (
+            <li key={link.key} data-site="">
+              <span>
+                <SiteIcon id={link.icon} />
+              </span>
+            </li>
+          ))}
+          <li className="more-probe" data-more-probe="">
+            & 99 more
+          </li>
+        </ul>
+      )}
+      <ul className="urls">
+        {shown.map((link) => (
+          <li key={link.key}>
+            <a href={link.href} target="_blank" rel="noreferrer" title={linkTitle(link)} aria-label={linkTitle(link)}>
+              <SiteIcon id={link.icon} />
+            </a>
+          </li>
+        ))}
+        {hidden > 0 && (
+          <li>
+            <button type="button" className="text-button" onClick={() => setExpanded(true)}>
+              {`& ${hidden} more`}
+            </button>
+          </li>
+        )}
+        {expanded && limit != null && limit < links.length && (
+          <li className="site-links-collapse">
+            <button type="button" className="text-button" onClick={() => setExpanded(false)}>
+              collapse
+            </button>
+          </li>
+        )}
+      </ul>
+    </div>
+  );
+}
+
+function linkTitle(link: ProfileLink): string {
+  try {
+    const url = new URL(link.href);
+    const host = url.host.replace(/^www\./, "");
+    const path = `${url.pathname}${url.search}${url.hash}`.replace(/\/$/, "");
+    const shown = `${host}${path === "/" ? "" : path}`;
+    if (shown === link.label || link.label === host) return shown;
+    return `${link.label} — ${shown}`;
+  } catch {
+    return link.label;
+  }
+}
+
+function siteLinkLimit(root: HTMLElement): number {
+  if (root.clientWidth === 0) return Number.POSITIVE_INFINITY;
+  const tokens = [...root.querySelectorAll<HTMLElement>("[data-site]")];
+  const total = tokens.length;
+  if (total === 0) return 0;
+  const tops = lineTops(tokens);
+  if (tops.length <= 2) return total;
+  const line2 = tops[1];
+  if (line2 == null) return total;
+  const probe = root.querySelector<HTMLElement>("[data-more-probe]");
+  if (!probe) return total;
+  const right = root.getBoundingClientRect().right;
+  const gap = Number.parseFloat(getComputedStyle(root).columnGap) || 0;
+  let count = tokens.filter((token) => token.getBoundingClientRect().top <= line2 + 2).length;
+
+  const fits = (n: number) => {
+    const hidden = total - n;
+    if (hidden <= 0) return true;
+    const last = tokens[n - 1];
+    if (!last) return false;
+    const top = last.getBoundingClientRect().top;
+    if (top > line2 + 2) return false;
+    if (top < line2 - 2) return true;
+    probe.textContent = `& ${hidden} more`;
+    return last.getBoundingClientRect().right + gap + probe.offsetWidth <= right + 1;
+  };
+
+  while (count > 0 && !fits(count)) count -= 1;
+  return Math.max(count, 1);
 }
 
 export function MissingDetail({ mention }: { mention: AboutMention }) {

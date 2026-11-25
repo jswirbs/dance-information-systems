@@ -328,8 +328,8 @@ export function App() {
         <section className="panel">
           {mode === "explore" && (
             <>
+              <p className="mode-lead"><strong>Explore</strong> the connections surrounding any artist(s), label(s), or release(s)</p>
               <label className="search">
-                <span>Search artists, labels, or releases to add to the graph as a seed</span>
                 <span className="search-field">
                   <input
                     value={query}
@@ -346,7 +346,8 @@ export function App() {
                         void addSeed(hits[0]);
                       }
                     }}
-                    placeholder="Workshop, Lawrence, Werk"
+                    placeholder="Search artists, labels, or releases"
+                    aria-label="Search artists, labels, or releases"
                     aria-expanded={searchOpen && searchedQuery != null && query.trim().length > 0}
                     aria-autocomplete="list"
                     autoComplete="off"

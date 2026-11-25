@@ -140,6 +140,7 @@ export function PathPanel({
 
   return (
     <>
+      <p className="mode-lead"><strong>Find the path</strong> between two artists, labels, or releases and the music that connects them</p>
       <div className="path-stops">
         {stops.map((stop, index) => {
           const label = SLOT_LABELS[index] ?? String(index + 1);
@@ -247,41 +248,45 @@ export function PathPanel({
         </button>
         {ready && payload?.hops != null && <span className="path-hops">{hopText(payload)}</span>}
       </div>
-      <hr className="path-rule" />
-      <section className="path-playlist">
-        <h2>{stops[0] && stops[1] ? `Playlist from ${stops[0].name} to ${stops[1].name}` : "Playlist"}</h2>
-        {empty ? (
-          <div className={`path-empty${empty.tone === "plain" ? "" : " loading-note"}`}>
-            <p>
-              {empty.title}
-              {empty.tone === "loading" ? <Ellipsis /> : null}
-            </p>
-            {empty.detail && <p className="path-empty-detail">{empty.detail}</p>}
-          </div>
-        ) : tracks.length === 0 ? (
-          <div className="path-empty">
-            <p>No releases on this path.</p>
-          </div>
-        ) : (
-          <ScrollList count={tracks.length}>
-            <ul className="rows">
-              {tracks.map((track, index) => (
-                <PlaylistRow
-                  key={`${track.hopIndex}:${track.releaseId}:${track.title}`}
-                  track={track}
-                  thumbUrl={thumbs.get(track.releaseId) ?? null}
-                  active={session?.index === index}
-                  paused={session?.index === index ? session.paused : true}
-                  busy={resolving === index}
-                  missing={failed.includes(index)}
-                  onOpen={onOpen}
-                  onToggle={() => void playAt(index)}
-                />
-              ))}
-            </ul>
-          </ScrollList>
-        )}
-      </section>
+      {ready && (
+        <>
+          <hr className="path-rule" />
+          <section className="path-playlist">
+            <h2>{stops[0] && stops[1] ? `Playlist from ${stops[0].name} to ${stops[1].name}` : "Playlist"}</h2>
+            {empty ? (
+              <div className={`path-empty${empty.tone === "plain" ? "" : " loading-note"}`}>
+                <p>
+                  {empty.title}
+                  {empty.tone === "loading" ? <Ellipsis /> : null}
+                </p>
+                {empty.detail && <p className="path-empty-detail">{empty.detail}</p>}
+              </div>
+            ) : tracks.length === 0 ? (
+              <div className="path-empty">
+                <p>No releases on this path.</p>
+              </div>
+            ) : (
+              <ScrollList count={tracks.length}>
+                <ul className="rows">
+                  {tracks.map((track, index) => (
+                    <PlaylistRow
+                      key={`${track.hopIndex}:${track.releaseId}:${track.title}`}
+                      track={track}
+                      thumbUrl={thumbs.get(track.releaseId) ?? null}
+                      active={session?.index === index}
+                      paused={session?.index === index ? session.paused : true}
+                      busy={resolving === index}
+                      missing={failed.includes(index)}
+                      onOpen={onOpen}
+                      onToggle={() => void playAt(index)}
+                    />
+                  ))}
+                </ul>
+              </ScrollList>
+            )}
+          </section>
+        </>
+      )}
     </>
   );
 }
