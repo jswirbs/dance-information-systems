@@ -296,6 +296,26 @@ export function App() {
     else void fillStop(hit);
   }
 
+  function replaceSeed(hit: SearchHit) {
+    setQuery("");
+    setHits([]);
+    setSeeds((current) =>
+      current.length === 1 && current[0].type === hit.type && current[0].id === hit.id ? current : [hit],
+    );
+    void openDetail(hit.type, hit.id);
+  }
+
+  function replaceFromDetail() {
+    if (!detail) return;
+    replaceSeed({
+      type: detail.type,
+      id: detail.id,
+      name: detail.name,
+      thumbUrl: detail.thumbUrl,
+      disambiguator: null,
+    });
+  }
+
   const pathGraph: GraphPayload | null = pathPayload ? { nodes: pathPayload.nodes, links: pathPayload.links } : null;
   const pathProblem = pathProblemTitle(pathError);
   const pathWaiting = stops.some((stop) => stop == null);
@@ -398,8 +418,10 @@ export function App() {
           {detail && (
             <Detail
               record={detail}
-              useLabel={mode === "explore" ? (detailIsSeed ? "Remove seed" : "Use as seed") : null}
+              useLabel={mode === "explore" ? (detailIsSeed ? "Remove seed" : "Add seed") : null}
+              replaceLabel={mode === "explore" ? (seeds.length > 1 ? "Replace seeds" : "Replace seed") : null}
               onUse={useFromDetail}
+              onReplace={replaceFromDetail}
               onOpen={(type, id) => void openDetail(type, id)}
               onMention={openMention}
             />
@@ -414,6 +436,7 @@ export function App() {
               nodeCap={nodeCap}
               onNodeCapChange={setNodeCap}
               onSelect={(type, id) => void openDetail(type, id)}
+              seedCount={seeds.length}
               onToggleSeed={(node) => {
                 if (node.seed) {
                   setSeeds((current) => current.filter((seed) => !(seed.type === node.entityType && seed.id === node.discogsId)));
@@ -427,6 +450,15 @@ export function App() {
                   disambiguator: null,
                 });
               }}
+              onReplaceSeed={(node) =>
+                replaceSeed({
+                  type: node.entityType,
+                  id: node.discogsId,
+                  name: node.name,
+                  thumbUrl: null,
+                  disambiguator: null,
+                })
+              }
               relatedType={exploreTarget}
               loading={exploreLoading}
               emptyMessage="Add a seed to draw the neighborhood."

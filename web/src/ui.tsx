@@ -279,13 +279,17 @@ function LoadedImage({ url, className }: { url: string; className: string }) {
 export function Detail({
   record,
   useLabel,
+  replaceLabel,
   onUse,
+  onReplace,
   onOpen,
   onMention,
 }: {
   record: EntityDetail;
   useLabel: string | null;
+  replaceLabel?: string | null;
   onUse: () => void;
+  onReplace?: () => void;
   onOpen: (type: EntityType, id: number) => void;
   onMention: (mention: AboutMention) => void;
 }) {
@@ -358,6 +362,14 @@ export function Detail({
               <>
                 <button type="button" className="text-button" onClick={onUse}>
                   {useLabel}
+                </button>
+                {" · "}
+              </>
+            )}
+            {replaceLabel && onReplace && (
+              <>
+                <button type="button" className="text-button" onClick={onReplace}>
+                  {replaceLabel}
                 </button>
                 {" · "}
               </>

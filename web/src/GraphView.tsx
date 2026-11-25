@@ -23,7 +23,6 @@ type GraphLayout = ExploreLayout | "path";
 type Strength = number | ((...args: never[]) => number);
 
 type NodeMenu = {
-  id: string;
   name: string;
   seed: boolean;
   entityType: EntityType;
@@ -67,6 +66,8 @@ export function GraphView({
   onNodeCapChange,
   onSelect,
   onToggleSeed,
+  onReplaceSeed,
+  seedCount = 0,
   onExploreNode,
   onStartPath,
   emptyMessage = "Add a seed to draw the neighborhood.",
@@ -82,6 +83,8 @@ export function GraphView({
   onNodeCapChange: (value: number) => void;
   onSelect: (type: DrawNode["entityType"], id: number) => void;
   onToggleSeed?: (node: { entityType: EntityType; discogsId: number; name: string; seed: boolean }) => void;
+  onReplaceSeed?: (node: { entityType: EntityType; discogsId: number; name: string }) => void;
+  seedCount?: number;
   onExploreNode?: (node: { entityType: EntityType; discogsId: number; name: string }) => void;
   onStartPath?: (node: { entityType: EntityType; discogsId: number; name: string }) => void;
   emptyMessage?: string;
@@ -96,7 +99,6 @@ export function GraphView({
   const settingsRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
   const [menu, setMenu] = useState<NodeMenu | null>(null);
-  const [removed, setRemoved] = useState<string[]>([]);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [visible, setVisible] = useState<Record<EntityType, boolean>>({ artist: true, label: true, release: true });
   const [exploreLayout, setExploreLayout] = useState<ExploreLayout>(readExploreLayout);
@@ -109,14 +111,6 @@ export function GraphView({
     data: { nodes: [], links: [] },
     cache: new Map(),
   });
-  const seedKey = payload?.nodes
-    .filter((node) => node.seed)
-    .map((node) => node.id)
-    .sort()
-    .join("|") ?? "";
-  useEffect(() => {
-    setRemoved([]);
-  }, [seedKey]);
   const focusedId = useRef<string | null>(null);
   const labelIds = useRef<Set<string> | null>(null);
   const hoverRef = useRef<string | null>(null);
@@ -126,7 +120,7 @@ export function GraphView({
   const fadingRef = useRef(false);
   const activeLayout: GraphLayout = layout === "path" ? "path" : exploreLayout;
 
-  const projected = useMemo(() => projectGraph(payload, removed, visible), [payload, removed, visible]);
+  const projected = useMemo(() => projectGraph(payload, visible), [payload, visible]);
   const data = useMemo(() => {
     const signature = activeLayout === "path" ? orderedSignature(projected) : graphSignature(projected);
     const store = graphStore.current;
@@ -361,7 +355,6 @@ export function GraphView({
               const drawn = node as DrawNode;
               setOpen(false);
               setMenu({
-                id: drawn.id,
                 name: drawn.name,
                 seed: drawn.seed,
                 entityType: drawn.entityType,
@@ -369,7 +362,7 @@ export function GraphView({
                 ...menuPosition(
                   event.clientX,
                   event.clientY,
-                  menuHeight(layout === "path", onToggleSeed != null, onExploreNode != null, onStartPath != null),
+                  menuHeight(onToggleSeed != null, onReplaceSeed != null, onExploreNode != null, onStartPath != null),
                 ),
               });
             }}
@@ -442,7 +435,23 @@ export function GraphView({
                   setMenu(null);
                 }}
               >
-                {menu.seed ? "Remove seed" : "Use as seed"}
+                {menu.seed ? "Remove seed" : "Add seed"}
+              </button>
+            )}
+            {onReplaceSeed && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => {
+                  onReplaceSeed({
+                    entityType: menu.entityType,
+                    discogsId: menu.discogsId,
+                    name: menu.name,
+                  });
+                  setMenu(null);
+                }}
+              >
+                {seedCount > 1 ? "Replace seeds" : "Replace seed"}
               </button>
             )}
             {onStartPath && (
@@ -459,18 +468,6 @@ export function GraphView({
                 }}
               >
                 Start path from here
-              </button>
-            )}
-            {layout !== "path" && (
-              <button
-                type="button"
-                role="menuitem"
-                onClick={() => {
-                  setRemoved((current) => (current.includes(menu.id) ? current : [...current, menu.id]));
-                  setMenu(null);
-                }}
-              >
-                Remove node
               </button>
             )}
           </>
@@ -492,10 +489,9 @@ function readExploreLayout(): ExploreLayout {
   return "proximity";
 }
 
-function projectGraph(payload: GraphPayload | null, removed: string[], visible: Record<EntityType, boolean>): PlainGraph {
+function projectGraph(payload: GraphPayload | null, visible: Record<EntityType, boolean>): PlainGraph {
   if (!payload) return { nodes: [], links: [] };
-  const hidden = new Set(removed);
-  const nodes = payload.nodes.filter((node) => visible[node.entityType] && !hidden.has(node.id));
+  const nodes = payload.nodes.filter((node) => visible[node.entityType]);
   const ids = new Set(nodes.map((node) => node.id));
   const links = payload.links.filter((link) => ids.has(link.source) && ids.has(link.target));
   return { nodes, links };
@@ -1090,8 +1086,8 @@ function overlaps(a: Box, b: Box, pad: number): boolean {
   return a.x - pad < b.x + b.w && a.x + a.w + pad > b.x && a.y - pad < b.y + b.h && a.y + a.h + pad > b.y;
 }
 
-function menuHeight(path: boolean, seedAction: boolean, exploreAction: boolean, startPathAction: boolean): number {
-  const items = 1 + (exploreAction ? 1 : 0) + (seedAction ? 1 : 0) + (startPathAction ? 1 : 0) + (path ? 0 : 1);
+function menuHeight(seedAction: boolean, replaceAction: boolean, exploreAction: boolean, startPathAction: boolean): number {
+  const items = 1 + (exploreAction ? 1 : 0) + (seedAction ? 1 : 0) + (replaceAction ? 1 : 0) + (startPathAction ? 1 : 0);
   return items * 32;
 }
 
