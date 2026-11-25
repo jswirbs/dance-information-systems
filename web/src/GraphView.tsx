@@ -58,6 +58,9 @@ const FADE_SNAP = 0.02;
 const PLAY_BUTTON = 22;
 // Graph units. The play button sits this far off the node, matching the label.
 const LABEL_GAP = 4;
+// Hover hit circle, in graph units. Larger than the visible node so the pointer can
+// reach the play button without dropping the node.
+const NODE_HIT = 12;
 const HOVER_CLEAR_MS = 48;
 const BREATH_MS = 3900;
 const PULSE_MS = 5200;
@@ -387,6 +390,16 @@ export function GraphView({
     hoverClear.current = window.setTimeout(() => {
       hoverClear.current = null;
       if (hoverLock.current) return;
+      // Force-graph reports a node only when the object under the pointer changes.
+      // A clear queued while the pointer is already on a node would drop that hover
+      // and never get another report to bring it back.
+      if (pointerInside.current) {
+        const landed = nodeUnderPointer(pointer.current.x, pointer.current.y);
+        if (landed) {
+          holdHover(landed);
+          return;
+        }
+      }
       hoverRef.current = null;
       setHoverNode(null);
       if (layoutRef.current !== "path") {
@@ -396,17 +409,44 @@ export function GraphView({
     }, HOVER_CLEAR_MS);
   }
 
-  // Screen distance from the pointer to the node's hit circle (radius 12 in graph space).
-  function pointerHitsNode(clientX: number, clientY: number, node: DrawNode): boolean {
+  // Squared screen distance from the pointer to a node, or null when it cannot be placed.
+  function pointerDist(clientX: number, clientY: number, node: DrawNode, origin: DOMRect): number | null {
     const graph = ref.current;
-    const canvas = frameRef.current?.querySelector("canvas");
-    if (!graph || !canvas || node.x == null || node.y == null) return false;
-    const origin = canvas.getBoundingClientRect();
+    if (!graph || node.x == null || node.y == null || !Number.isFinite(node.x) || !Number.isFinite(node.y)) return null;
     const point = graph.graph2ScreenCoords(node.x, node.y);
     const dx = clientX - origin.left - point.x;
     const dy = clientY - origin.top - point.y;
-    const reach = 12 * graph.zoom();
-    return dx * dx + dy * dy <= reach * reach;
+    return dx * dx + dy * dy;
+  }
+
+  function pointerHitsNode(clientX: number, clientY: number, node: DrawNode): boolean {
+    const graph = ref.current;
+    const canvas = frameRef.current?.querySelector("canvas");
+    if (!graph || !canvas) return false;
+    const dist = pointerDist(clientX, clientY, node, canvas.getBoundingClientRect());
+    if (dist == null) return false;
+    const reach = NODE_HIT * graph.zoom();
+    return dist <= reach * reach;
+  }
+
+  // Closest node whose hit circle contains the pointer. Later nodes win a tie, matching
+  // the canvas hit test, which keeps the last color painted at that pixel.
+  function nodeUnderPointer(clientX: number, clientY: number): DrawNode | null {
+    const graph = ref.current;
+    const canvas = frameRef.current?.querySelector("canvas");
+    if (!graph || !canvas) return null;
+    const origin = canvas.getBoundingClientRect();
+    const reach = NODE_HIT * graph.zoom();
+    const reachSq = reach * reach;
+    let best: DrawNode | null = null;
+    let bestDist = reachSq;
+    for (const node of graphStore.current.data.nodes) {
+      const dist = pointerDist(clientX, clientY, node, origin);
+      if (dist == null || dist > bestDist) continue;
+      best = node;
+      bestDist = dist;
+    }
+    return best;
   }
 
   function holdHover(node: DrawNode) {
@@ -601,11 +641,11 @@ export function GraphView({
               const button = PLAY_BUTTON / scaleSafe;
               context.fillStyle = color;
               context.beginPath();
-              context.arc(x, y, 12, 0, Math.PI * 2);
+              context.arc(x, y, NODE_HIT, 0, Math.PI * 2);
               // A bridge to the play button, which sits just left of the circle. The button
               // itself is HTML, so the hit area only has to meet its right edge.
               const edge = radius + LABEL_GAP;
-              if (edge > 12) context.rect(x - edge, y - button / 2, edge - 12, button);
+              if (edge > NODE_HIT) context.rect(x - edge, y - button / 2, edge - NODE_HIT, button);
               context.fill();
             }}
           />
@@ -621,23 +661,27 @@ export function GraphView({
             }}
             onPointerLeave={(event) => {
               hoverLock.current = false;
-              const node = hoverNode;
-              if (node && pointerHitsNode(event.clientX, event.clientY, node)) {
-                cancelHoverClear();
-                return;
-              }
               const ontoGraph = event.relatedTarget instanceof Node && frameRef.current?.contains(event.relatedTarget);
               if (!ontoGraph) {
+                const node = hoverNode;
+                if (node && pointerHitsNode(event.clientX, event.clientY, node)) {
+                  cancelHoverClear();
+                  return;
+                }
                 releaseHover();
                 return;
               }
-              // The leave point can sit just outside the hit circle while the pointer
-              // is traveling onto the node. The graph will not re-report a node it
-              // already considers hovered, so recheck after this move lands.
+              // The leave point can sit just outside a hit circle, or still inside the
+              // node that owns this button, while the pointer is traveling onto another
+              // node. Force-graph reports hover from its own animation frame, and only
+              // when the node under the pointer changes. Retarget after this move lands,
+              // or a clear queued here drops the node the graph just reported and will
+              // not report again.
               requestAnimationFrame(() => {
                 if (hoverLock.current) return;
-                if (node && pointerHitsNode(pointer.current.x, pointer.current.y, node)) {
-                  cancelHoverClear();
+                const landed = nodeUnderPointer(pointer.current.x, pointer.current.y);
+                if (landed) {
+                  holdHover(landed);
                   return;
                 }
                 releaseHover();
