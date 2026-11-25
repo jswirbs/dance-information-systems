@@ -7,10 +7,24 @@ import { GraphView } from "./GraphView";
 import { PathPanel, pathProblemTitle } from "./PathPanel";
 import { PlayerProvider } from "./player";
 import { SearchSuggest } from "./SearchSuggest";
+import { CursorTrail } from "./CursorTrail";
 import { ThemeToggle } from "./theme";
 import { Detail, MissingDetail } from "./ui";
 
 type Mode = "explore" | "path";
+
+const TRAIL_KEY = "dis-cursor-trail";
+
+function readCursorTrail(): boolean {
+  try {
+    const stored = localStorage.getItem(TRAIL_KEY);
+    if (stored === "0") return false;
+    if (stored === "1") return true;
+  } catch {
+    // Preference is optional.
+  }
+  return true;
+}
 
 export function App() {
   const [mode, setMode] = useState<Mode>("explore");
@@ -31,6 +45,7 @@ export function App() {
   const [exploreError, setExploreError] = useState<string | null>(null);
   const [exploreLoading, setExploreLoading] = useState(false);
   const [nodeCap, setNodeCap] = useState(DEFAULT_NODE_CAP);
+  const [cursorTrail, setCursorTrail] = useState(readCursorTrail);
   const [graphCap, setGraphCap] = useState(DEFAULT_NODE_CAP);
 
   const [stops, setStops] = useState<Array<SearchHit | null>>([null, null]);
@@ -467,6 +482,15 @@ export function App() {
               loading={exploreLoading}
               emptyMessage="Add a seed to draw the neighborhood."
               onStartPath={startPath}
+              cursorTrail={cursorTrail}
+              onCursorTrail={(enabled) => {
+                setCursorTrail(enabled);
+                try {
+                  localStorage.setItem(TRAIL_KEY, enabled ? "1" : "0");
+                } catch {
+                  // Preference is optional.
+                }
+              }}
             />
           ) : (
             <GraphView
@@ -486,6 +510,7 @@ export function App() {
         </section>
       </main>
       </div>
+      <CursorTrail enabled={cursorTrail} />
     </PlayerProvider>
   );
 }

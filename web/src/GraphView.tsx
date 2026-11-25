@@ -3,6 +3,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import ForceGraph2D, { type ForceGraphMethods } from "react-force-graph-2d";
 import { ThinkingOrb } from "thinking-orbs";
 import { orbGravity } from "./cursor";
+import { CursorTrailSwatch } from "./CursorTrail";
 import { MAX_NODE_CAP, MIN_NODE_CAP } from "../../src/shared/constants";
 import type { EntityType, GraphLink, GraphNode, GraphPayload } from "../../src/shared/types";
 import { EntityPlayButton } from "./EntityPlay";
@@ -84,6 +85,8 @@ export function GraphView({
   relatedType,
   loading = false,
   emptyItalic = false,
+  cursorTrail = false,
+  onCursorTrail,
 }: {
   payload: GraphPayload | null;
   selectedId: string | null;
@@ -101,6 +104,8 @@ export function GraphView({
   relatedType?: EntityType;
   loading?: boolean;
   emptyItalic?: boolean;
+  cursorTrail?: boolean;
+  onCursorTrail?: (enabled: boolean) => void;
 }) {
   const { theme } = useTheme();
   const paletteRef = useRef<ThemePalette>(readLivePalette());
@@ -573,6 +578,17 @@ export function GraphView({
                 </label>
               ))}
             </fieldset>
+            {onCursorTrail && (
+              <label title="Cursor trail">
+                <input
+                  type="checkbox"
+                  checked={cursorTrail}
+                  aria-label="Cursor trail"
+                  onChange={(event) => onCursorTrail(event.target.checked)}
+                />
+                <CursorTrailSwatch />
+              </label>
+            )}
           </Popover>
         </div>
       )}
