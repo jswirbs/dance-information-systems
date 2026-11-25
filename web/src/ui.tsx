@@ -6,6 +6,7 @@ import type { AboutMention, AboutRun, AliasRef, Credit, EntityDetail, EntityType
 import { EntityPlayButton } from "./EntityPlay";
 import { ReleaseTracks } from "./ReleaseTracks";
 import { SiteIcon } from "./siteIcons";
+import { useTheme } from "./theme";
 
 export function ScrollList({ count, children }: { count: number; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
@@ -236,6 +237,7 @@ export function Thumb({ url, name, type }: { url: string | null; name: string; t
 }
 
 function LoadedImage({ url, className }: { url: string; className: string }) {
+  const { theme, palette } = useTheme();
   const ref = useRef<ImageGenerationHandle>(null);
   const [failed, setFailed] = useState(false);
   const [settled, setSettled] = useState(false);
@@ -263,8 +265,8 @@ function LoadedImage({ url, className }: { url: string; className: string }) {
       ref={ref}
       className={className}
       preset="pixels-organic"
-      theme="light"
-      cardBg="#ffffff"
+      theme={theme}
+      cardBg={palette.bg}
       images={url}
       borderRadius={0}
       paused={settled}

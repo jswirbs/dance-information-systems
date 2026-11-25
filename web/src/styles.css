@@ -1,6 +1,6 @@
+@import "./theme.css";
+
 :root {
-  color: #000;
-  background: #fff;
   font-family: sans-serif;
 }
 
@@ -29,7 +29,108 @@ header h1 {
   font-weight: normal;
 }
 
-.mode-toggle { margin: 0; }
+.toggle.mode-toggle { margin: 0 0 0 auto; }
+
+.mode-tabs { display: flex; gap: 6px; }
+
+.mode-toggle .theme-toggle {
+  position: relative;
+  overflow: hidden;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  background: #fff;
+  color: #000;
+}
+
+.mode-toggle .theme-toggle[data-scene="dark"] { background: #000; color: #fff; }
+
+.theme-sky,
+.theme-glyph {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  pointer-events: none;
+}
+
+.theme-sky {
+  top: 0;
+  height: 200%;
+}
+
+.theme-glyph {
+  inset: 0;
+  display: grid;
+  place-items: center;
+}
+
+.theme-sun { color: #000; }
+.theme-moon { color: #fff; }
+
+.theme-stars { position: absolute; inset: 0; }
+.theme-sky .theme-stars { inset: auto; left: 0; top: 0; width: 100%; height: 100%; }
+.theme-stars i {
+  position: absolute;
+  width: 1.5px;
+  height: 1.5px;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.75);
+}
+.theme-toggle > .theme-stars i:nth-child(1) { top: 22%; left: 32%; }
+.theme-toggle > .theme-stars i:nth-child(2) { top: 48%; left: 70%; width: 1px; height: 1px; opacity: 0.55; }
+.theme-toggle > .theme-stars i:nth-child(3) { top: 68%; left: 24%; }
+.theme-toggle[data-scene="light"] > .theme-stars { visibility: hidden; }
+.theme-toggle[data-scene="dark"] > .theme-stars { transform: translateY(0); }
+.theme-toggle[data-scene="dark"]:hover:not(.is-held):not(.is-switching) > .theme-stars { transform: translateY(-25%); }
+.theme-toggle[data-scene="dark"].is-switching > .theme-stars { transform: translateY(-100%); }
+.theme-sky .theme-stars i:nth-child(1) { top: 11%; left: 32%; }
+.theme-sky .theme-stars i:nth-child(2) { top: 24%; left: 70%; width: 1px; height: 1px; opacity: 0.55; }
+.theme-sky .theme-stars i:nth-child(3) { top: 34%; left: 24%; }
+.theme-sky .theme-stars i:nth-child(4) { top: 58%; left: 46%; width: 1px; height: 1px; opacity: 0.6; }
+.theme-sky .theme-stars i:nth-child(5) { top: 66%; left: 18%; }
+
+/* Light: night is parked above. Hover brings the dusk band down over the button; a click keeps going until solid night covers it. */
+.theme-toggle[data-scene="light"] .theme-sky {
+  background: linear-gradient(to bottom, #000 0% 50%, #3a3a3a 50%, rgb(0 0 0 / 0) 100%);
+  transform: translateY(-100%);
+}
+.theme-toggle[data-scene="light"] .theme-sun { transform: translateY(0); }
+.theme-toggle[data-scene="light"] .theme-moon { transform: translateY(-100%); }
+.theme-toggle[data-scene="light"]:hover:not(.is-held):not(.is-switching) .theme-sky { transform: translateY(-50%); }
+.theme-toggle[data-scene="light"]:hover:not(.is-held):not(.is-switching) .theme-sun { transform: translateY(25%); }
+.theme-toggle[data-scene="light"].is-switching .theme-sky { transform: translateY(0); }
+.theme-toggle[data-scene="light"].is-switching .theme-sun { transform: translateY(100%); }
+.theme-toggle[data-scene="light"].is-switching .theme-moon { transform: translateY(0); }
+
+/* Dark: day is parked below. Hover lifts the moon and raises a light band; a click carries the moon out the top and the sun up from the bottom. */
+.theme-toggle[data-scene="dark"] .theme-sky {
+  background: linear-gradient(to bottom, rgb(255 255 255 / 0) 0%, rgb(255 255 255 / 0.86) 50%, #fff 50% 100%);
+  transform: translateY(50%);
+}
+.theme-toggle[data-scene="dark"] .theme-moon { transform: translateY(0); }
+.theme-toggle[data-scene="dark"] .theme-sun { transform: translateY(100%); }
+.theme-toggle[data-scene="dark"]:hover:not(.is-held):not(.is-switching) .theme-sky { transform: translateY(0); }
+.theme-toggle[data-scene="dark"]:hover:not(.is-held):not(.is-switching) .theme-moon { transform: translateY(-25%); }
+.theme-toggle[data-scene="dark"].is-switching .theme-sky { transform: translateY(-50%); }
+.theme-toggle[data-scene="dark"].is-switching .theme-moon { transform: translateY(-100%); }
+.theme-toggle[data-scene="dark"].is-switching .theme-sun { transform: translateY(0); }
+
+.theme-icon {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .theme-sky,
+  .theme-glyph,
+  .theme-toggle > .theme-stars { transition: transform 420ms ease; }
+}
+
+.theme-toggle.is-settle .theme-sky,
+.theme-toggle.is-settle .theme-glyph,
+.theme-toggle.is-settle > .theme-stars { transition: none; }
 
 .eyebrow { margin: 0; }
 
@@ -41,7 +142,7 @@ main {
   align-items: start;
 }
 
-.panel, .map { border: 1px solid #000; }
+.panel, .map { border: 1px solid var(--line); }
 
 .panel { padding: 12px; }
 
@@ -52,9 +153,9 @@ main {
 
 .search input {
   width: 100%;
-  border: 1px solid #000;
+  border: 1px solid var(--line);
   border-radius: 0;
-  background: #fff;
+  background: var(--bg);
   padding: 6px 8px;
 }
 
@@ -73,12 +174,12 @@ main {
   align-items: end;
   justify-content: center;
   pointer-events: none;
-  background: linear-gradient(to bottom, rgba(255, 255, 255, 0), #fff 68%);
+  background: var(--scrim);
   line-height: 1;
 }
 
 .hits > li > button, .rows > li > button, .chip, .toggle button {
-  background: #fff;
+  background: var(--bg);
   border: 0;
   cursor: pointer;
   text-align: left;
@@ -103,7 +204,7 @@ main {
   gap: 8px;
   width: 100%;
   padding: 6px 0;
-  border-bottom: 1px solid #ccc;
+  border-bottom: 1px solid var(--divider);
 }
 
 .hits strong, .rows strong { display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
@@ -135,8 +236,8 @@ main {
   width: max-content;
   max-width: min(320px, calc(100vw - 16px));
   padding: 6px 8px;
-  border: 1px solid #000;
-  background: #fff;
+  border: 1px solid var(--line);
+  background: var(--bg);
   font-style: normal;
   font-weight: normal;
   line-height: 1.35;
@@ -152,7 +253,7 @@ main {
 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 
-.chip { border: 1px solid #000; padding: 2px 6px; }
+.chip { border: 1px solid var(--line); padding: 2px 6px; }
 
 .toggle {
   display: flex;
@@ -160,7 +261,7 @@ main {
   margin: 12px 0 8px;
 }
 
-.toggle button { border: 1px solid #000; padding: 4px 8px; }
+.toggle button { border: 1px solid var(--line); padding: 4px 8px; }
 
 .toggle button[aria-selected="true"] { font-weight: bold; }
 
@@ -174,8 +275,8 @@ main {
   width: 100%;
   min-height: 48px;
   padding: 6px 8px;
-  border: 1px solid #000;
-  background: #fff;
+  border: 1px solid var(--line);
+  background: var(--bg);
   text-align: left;
 }
 
@@ -238,8 +339,8 @@ main {
   margin: 0;
   padding: 0;
   list-style: none;
-  background: #fff;
-  border: 1px solid #000;
+  background: var(--bg);
+  border: 1px solid var(--line);
   max-height: 280px;
   overflow: auto;
 }
@@ -252,8 +353,8 @@ main {
   width: 100%;
   padding: 6px 8px;
   border: 0;
-  border-bottom: 1px solid #ccc;
-  background: #fff;
+  border-bottom: 1px solid var(--divider);
+  background: var(--bg);
   cursor: pointer;
   text-align: left;
   font: inherit;
@@ -268,7 +369,7 @@ main {
 .path-rule {
   margin: 12px 0;
   border: 0;
-  border-top: 1px solid #000;
+  border-top: 1px solid var(--line);
 }
 .path-rule + .toggle { margin-top: 0; }
 
@@ -304,7 +405,7 @@ main {
   align-items: center;
   gap: 8px;
   padding: 8px 0;
-  border-bottom: 1px solid #ccc;
+  border-bottom: 1px solid var(--divider);
   cursor: pointer;
 }
 .rows .playlist-row > .play-toggle-wrap { flex: none; }
@@ -329,8 +430,8 @@ main {
   width: 28px;
   height: 28px;
   padding: 0;
-  border: 1px solid #000;
-  background: #fff;
+  border: 1px solid var(--line);
+  background: var(--bg);
   flex: none;
   cursor: pointer;
 }
@@ -344,7 +445,7 @@ main {
   width: 18px;
   height: 18px;
 }
-.tracks .play-toggle { border: 1px solid #000; background: #fff; }
+.tracks .play-toggle { border: 1px solid var(--line); background: var(--bg); }
 .tracks .play-toggle svg { width: 10px; height: 10px; }
 .play-toggle-spacer { width: 18px; height: 18px; }
 .path-player { margin-top: 8px; display: grid; gap: 6px; }
@@ -352,7 +453,7 @@ main {
   position: relative;
   width: 100%;
   aspect-ratio: 16 / 9;
-  border: 1px solid #000;
+  border: 1px solid var(--line);
   overflow: hidden;
 }
 .path-player-frame.is-hidden {
@@ -373,8 +474,8 @@ main {
   align-items: center;
   gap: 8px;
   padding: 4px 8px;
-  border: 1px solid #000;
-  background: #fff;
+  border: 1px solid var(--line);
+  background: var(--bg);
 }
 .path-transport button {
   display: grid;
@@ -393,10 +494,10 @@ main {
   flex: 1;
   min-width: 0;
   height: 6px;
-  background: rgba(0, 0, 0, 0.2);
+  background: var(--track);
   cursor: pointer;
 }
-.path-scrub-played { display: block; height: 100%; background: #000; }
+.path-scrub-played { display: block; height: 100%; background: var(--fg); }
 .path-time {
   flex: none;
   width: 13ch;
@@ -445,7 +546,7 @@ main {
 .placeholder {
   display: grid;
   place-items: center;
-  border: 1px solid #000;
+  border: 1px solid var(--line);
 }
 
 .placeholder.large { width: 72px; height: 72px; font-size: 24px; }
@@ -453,7 +554,7 @@ main {
 .detail {
   margin-top: 16px;
   padding-top: 12px;
-  border-top: 1px solid #000;
+  border-top: 1px solid var(--line);
   display: grid;
   gap: 16px;
 }
@@ -485,8 +586,8 @@ main {
   justify-content: center;
   width: 28px;
   height: 28px;
-  border: 1px solid #000;
-  background: #fff;
+  border: 1px solid var(--line);
+  background: var(--bg);
   color: inherit;
   text-decoration: none;
   flex: none;
@@ -581,10 +682,10 @@ main {
 .tracks li { display: grid; grid-template-columns: 18px 2.2em 1fr auto; gap: 8px; align-items: center; }
 .track-pos { text-align: right; }
 .track-main { min-width: 0; }
-.track-time { color: #000; }
+.track-time { color: var(--fg); }
 
 .map { position: relative; min-height: 720px; overflow: hidden; }
-.map .force-graph-container { background: #fff; }
+.map .force-graph-container { background: var(--bg); }
 .graph-empty, .map-note { padding: 12px; }
 .graph-empty { font-style: italic; }
 .map-note { position: absolute; left: 0; right: 0; bottom: 0; margin: 0; pointer-events: none; }
@@ -598,8 +699,8 @@ main {
 
 .popover,
 .graph-settings-toggle {
-  background: #fff;
-  border: 1px solid #000;
+  background: var(--bg);
+  border: 1px solid var(--line);
   border-radius: 0;
 }
 
@@ -612,7 +713,14 @@ main {
   cursor: pointer;
 }
 
-.graph-settings-toggle svg { display: block; }
+.graph-settings-toggle svg {
+  display: block;
+  transform: rotate(var(--gear-turn, 0deg));
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .graph-settings-toggle svg { transition: transform 240ms ease; }
+}
 
 .graph-frame { position: absolute; inset: 0; }
 .graph-play {
@@ -647,8 +755,8 @@ main {
 .graph-layout { display: flex; }
 
 .graph-layout button {
-  border: 1px solid #000;
-  background: #fff;
+  border: 1px solid var(--line);
+  background: var(--bg);
   padding: 2px 8px;
   cursor: pointer;
 }
@@ -668,14 +776,14 @@ main {
   margin: 0;
   padding: 6px 10px;
   border: 0;
-  background: #fff;
+  background: var(--bg);
   font: inherit;
   text-align: left;
   white-space: nowrap;
   cursor: pointer;
 }
 
-.context-menu button + button { border-top: 1px solid #000; }
+.context-menu button + button { border-top: 1px solid var(--line); }
 
 .graph-settings-panel .graph-cap {
   display: flex;
@@ -697,7 +805,7 @@ main {
 }
 
 .graph-settings-panel fieldset {
-  border: 1px solid #000;
+  border: 1px solid var(--line);
   margin: 0;
   padding: 6px 8px;
   display: grid;
@@ -706,7 +814,7 @@ main {
 
 .graph-settings-panel legend { padding: 0 4px; }
 .graph-settings-panel label { display: flex; gap: 6px; align-items: center; }
-.error { color: #900; }
+.error { color: var(--danger); }
 
 .now-playing {
   position: fixed;
@@ -715,9 +823,9 @@ main {
   bottom: 16px;
   width: min(380px, calc(100vw - 32px));
   display: grid;
-  border: 1px solid #000;
-  background: #fff;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  border: 1px solid var(--line);
+  background: var(--bg);
+  box-shadow: var(--shadow);
 }
 .now-playing-head {
   display: grid;
@@ -765,7 +873,7 @@ main {
 }
 .now-playing .path-transport {
   border: 0;
-  border-top: 1px solid #000;
+  border-top: 1px solid var(--line);
 }
 
 @media (max-width: 900px) {
@@ -780,7 +888,7 @@ main {
     border-right: 0;
     border-bottom: 0;
     padding-bottom: env(safe-area-inset-bottom);
-    box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.2);
+    box-shadow: var(--shadow-up);
   }
   body.has-player .page { padding-bottom: 96px; }
   body.player-video-open .page { padding-bottom: min(42vw, 280px); }

@@ -7,6 +7,7 @@ import { GraphView } from "./GraphView";
 import { PathPanel, pathProblemTitle } from "./PathPanel";
 import { PlayerProvider } from "./player";
 import { SearchSuggest } from "./SearchSuggest";
+import { ThemeToggle } from "./theme";
 import { Detail, MissingDetail } from "./ui";
 
 type Mode = "explore" | "path";
@@ -335,13 +336,16 @@ export function App() {
       <div className="page">
       <header>
         <h1>DANCE INFORMATION SYSTEMS</h1>
-        <div className="toggle mode-toggle" role="tablist" aria-label="Mode">
-          <button type="button" role="tab" aria-selected={mode === "explore"} onClick={() => setMode("explore")}>
-            Explore
-          </button>
-          <button type="button" role="tab" aria-selected={mode === "path"} onClick={() => setMode("path")}>
-            Pathfinder
-          </button>
+        <div className="toggle mode-toggle">
+          <div className="mode-tabs" role="tablist" aria-label="Mode">
+            <button type="button" role="tab" aria-selected={mode === "explore"} onClick={() => setMode("explore")}>
+              Explore
+            </button>
+            <button type="button" role="tab" aria-selected={mode === "path"} onClick={() => setMode("path")}>
+              Pathfinder
+            </button>
+          </div>
+          <ThemeToggle />
         </div>
       </header>
       <main>

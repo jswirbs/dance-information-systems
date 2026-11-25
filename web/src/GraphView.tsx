@@ -1,5 +1,5 @@
 import { forceCollide, forceRadial } from "d3-force";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import ForceGraph2D, { type ForceGraphMethods } from "react-force-graph-2d";
 import { ThinkingOrb } from "thinking-orbs";
 import { orbGravity } from "./cursor";
@@ -8,6 +8,7 @@ import type { EntityType, GraphLink, GraphNode, GraphPayload } from "../../src/s
 import { EntityPlayButton } from "./EntityPlay";
 import { PATH_SOURCE, usePlayer } from "./player";
 import { Popover } from "./Popover";
+import { THEME_MOTION_MS, readLivePalette, useTheme, type ThemePalette } from "./theme";
 
 type DrawNode = GraphNode & { x?: number; y?: number; vx?: number; vy?: number; fx?: number; fy?: number };
 
@@ -34,12 +35,6 @@ type NodeMenu = {
 };
 
 type Box = { x: number; y: number; w: number; h: number };
-
-const COLOR: Record<string, string> = {
-  artist: "#8c3d2f",
-  label: "#1e6a4a",
-  release: "#2c4e7a",
-};
 
 const TYPES: EntityType[] = ["artist", "label", "release"];
 const EXPLORE_LAYOUTS: ExploreLayout[] = ["proximity", "rings"];
@@ -104,10 +99,25 @@ export function GraphView({
   loading?: boolean;
   emptyItalic?: boolean;
 }) {
+  const { theme } = useTheme();
+  const paletteRef = useRef<ThemePalette>(readLivePalette());
+  const paintedTheme = useRef(theme);
+  const [blending, setBlending] = useState(false);
+  useEffect(() => {
+    if (paintedTheme.current === theme) return;
+    paintedTheme.current = theme;
+    paletteRef.current = readLivePalette();
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    setBlending(true);
+    const id = window.setTimeout(() => setBlending(false), THEME_MOTION_MS + 60);
+    return () => window.clearTimeout(id);
+  }, [theme]);
   const ref = useRef<ForceGraphMethods | undefined>(undefined);
   const frameRef = useRef<HTMLDivElement>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
+  const [gearOver, setGearOver] = useState(false);
+  const [gearReady, setGearReady] = useState(true);
   const [menu, setMenu] = useState<NodeMenu | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [visible, setVisible] = useState<Record<EntityType, boolean>>({ artist: true, label: true, release: true });
@@ -297,6 +307,7 @@ export function GraphView({
 
   const prepareLabels = useCallback(
     (context: CanvasRenderingContext2D, scale: number) => {
+      paletteRef.current = readLivePalette();
       const hover = activeLayout === "path" ? null : hoverRef.current;
       const moving = easeHover(data.nodes, data.links, hover, selectedId, nodeAlpha.current, linkAlpha.current, fadeClock);
       labelIds.current = activeLayout === "path" ? null : chooseLabels(data.nodes, hover, selectedId, scale, context);
@@ -317,7 +328,7 @@ export function GraphView({
   const paintNode = useCallback(
     (node: DrawNode, context: CanvasRenderingContext2D, scale: number) => {
       const alpha = nodeAlpha.current.get(node.id) ?? 1;
-      drawNode(node, context, scale, node.id === selectedId, alpha, nowPlaying.current.nodes.has(node.id), aura.current);
+      drawNode(node, context, scale, node.id === selectedId, alpha, nowPlaying.current.nodes.has(node.id), aura.current, paletteRef.current);
     },
     [selectedId],
   );
@@ -329,7 +340,7 @@ export function GraphView({
       const labeled = data.nodes.filter((node) => ids == null || ids.has(node.id));
       // Hovered and selected names paint last, so a must-show label stays on top of another name.
       labeled.sort((a, b) => labelRank(a, hover, selectedId) - labelRank(b, hover, selectedId));
-      for (const node of labeled) drawLabel(node, context, scale, nodeAlpha.current.get(node.id) ?? 1);
+      for (const node of labeled) drawLabel(node, context, scale, nodeAlpha.current.get(node.id) ?? 1, paletteRef.current.fg);
     },
     [data.nodes, selectedId],
   );
@@ -462,7 +473,19 @@ export function GraphView({
             aria-haspopup="dialog"
             aria-label="Settings"
             title="Settings"
-            onClick={() => setOpen((current) => !current)}
+            style={{ "--gear-turn": `${open ? (gearReady && gearOver ? 120 : 180) : gearReady && gearOver ? 60 : 0}deg` } as CSSProperties}
+            onPointerEnter={() => {
+              if (gearReady) setGearOver(true);
+            }}
+            onPointerLeave={() => {
+              setGearOver(false);
+              setGearReady(true);
+            }}
+            onClick={() => {
+              setGearReady(false);
+              setGearOver(false);
+              setOpen((current) => !current);
+            }}
           >
             <GearIcon />
           </button>
@@ -516,7 +539,7 @@ export function GraphView({
       <div className="graph-frame" ref={frameRef}>
         {loading ? (
           <div className="graph-loading" role="status" aria-label={layout === "path" ? "Searching the catalog" : "Loading the neighborhood"}>
-            <ThinkingOrb state={layout === "path" ? "connecting" : "working"} size={64} theme="light" gravity={orbGravity()} />
+            <ThinkingOrb state={layout === "path" ? "connecting" : "working"} size={64} theme={theme} gravity={orbGravity()} />
           </div>
         ) : !payload || data.nodes.length === 0 ? (
           <div className={`graph-empty${emptyItalic ? " loading-note" : ""}`}>
@@ -528,18 +551,18 @@ export function GraphView({
             width={size.width}
             height={size.height}
             graphData={data}
-            backgroundColor="#ffffff"
+            backgroundColor="var(--bg)"
             nodeId="id"
             cooldownTicks={activeLayout === "rings" ? 160 : 90}
-            autoPauseRedraw={!fading && !auraLive && !auraMoving}
+            autoPauseRedraw={!fading && !auraLive && !auraMoving && !blending}
             nodeLabel={activeLayout === "path" ? () => "" : (node) => nodePhrase(node as DrawNode)}
             linkLabel={(link) => linkPhrase(link as SimLink)}
-            linkColor={(link) => linkPaint(link as SimLink, linkPresence(link as SimLink, linkAlpha.current))}
+            linkColor={(link) => linkPaint(link as SimLink, linkPresence(link as SimLink, linkAlpha.current), paletteRef.current.ink)}
             linkWidth={(link) => linkWidth(link as SimLink, linkPresence(link as SimLink, linkAlpha.current))}
             linkCanvasObjectMode={(link) => (nowPlaying.current.link && linkCarries(link as SimLink, nowPlaying.current.link) ? "after" : undefined)}
             linkCanvasObject={(link, context, scale) => {
               const play = nowPlaying.current.link;
-              if (play && linkCarries(link as SimLink, play)) paintEdgePulse(link as SimLink, context, scale, aura.current);
+              if (play && linkCarries(link as SimLink, play)) paintEdgePulse(link as SimLink, context, scale, aura.current, paletteRef.current);
             }}
             onNodeClick={(node) => {
               const drawn = node as DrawNode;
@@ -1185,10 +1208,11 @@ function linkPresence(link: SimLink, alphas: Map<string, number>): number {
   return alphas.get(linkKey(link)) ?? 1;
 }
 
-function linkPaint(link: SimLink, presence: number): string {
+function linkPaint(link: SimLink, presence: number, ink: readonly [number, number, number]): string {
   const full = link.kind === "SIMILAR" ? 0.85 : 0.35;
   const opacity = 0.05 + (full - 0.05) * presence;
-  return `rgba(0,0,0,${opacity})`;
+  const [r, g, b] = ink;
+  return `rgba(${r},${g},${b},${opacity})`;
 }
 
 function linkWidth(link: SimLink, presence: number): number {
@@ -1430,7 +1454,7 @@ function auraBusy(aura: Aura): boolean {
   return aura.breath > 0.015 || aura.drift > 0.015 || aura.travel > 0.015 || aura.edge > 0.015;
 }
 
-function paintEdgePulse(link: SimLink, context: CanvasRenderingContext2D, scale: number, aura: Aura) {
+function paintEdgePulse(link: SimLink, context: CanvasRenderingContext2D, scale: number, aura: Aura, palette: ThemePalette) {
   const source = typeof link.source === "string" ? null : link.source;
   const target = typeof link.target === "string" ? null : link.target;
   if (!source || !target || source.x == null || source.y == null || target.x == null || target.y == null) return;
@@ -1438,8 +1462,8 @@ function paintEdgePulse(link: SimLink, context: CanvasRenderingContext2D, scale:
   const peak = -0.08 + aura.travel * 1.16;
   const life = Math.sin(aura.travel * Math.PI) * aura.edge * aura.presence;
   if (life < 0.02) return;
-  const from = COLOR[source.entityType] ?? "#221c16";
-  const to = COLOR[target.entityType] ?? "#221c16";
+  const from = nodeColor(palette, source.entityType);
+  const to = nodeColor(palette, target.entityType);
   const safe = Math.max(scale, 0.01);
   const steps = 36;
   for (let i = 0; i <= steps; i += 1) {
@@ -1508,11 +1532,16 @@ function mixHex(from: string, to: string, t: number): string {
   return `#${hex(ar + (br - ar) * u)}${hex(ag + (bg - ag) * u)}${hex(ab + (bb - ab) * u)}`;
 }
 
-function drawNode(node: DrawNode, context: CanvasRenderingContext2D, scale: number, selected: boolean, alpha: number, playing: boolean, aura: Aura) {
+function nodeColor(palette: ThemePalette, type: string): string {
+  if (type === "artist" || type === "label" || type === "release") return palette.nodes[type];
+  return palette.nodes.fallback;
+}
+
+function drawNode(node: DrawNode, context: CanvasRenderingContext2D, scale: number, selected: boolean, alpha: number, playing: boolean, aura: Aura, palette: ThemePalette) {
   const x = node.x ?? 0;
   const y = node.y ?? 0;
   const radius = node.seed ? 8 : 5;
-  const color = COLOR[node.entityType] ?? "#221c16";
+  const color = nodeColor(palette, node.entityType);
   context.save();
   if (playing) paintNodeAura(context, x, y, radius, color, alpha, aura);
   context.globalAlpha = alpha;
@@ -1524,13 +1553,13 @@ function drawNode(node: DrawNode, context: CanvasRenderingContext2D, scale: numb
     context.beginPath();
     context.arc(x, y, radius, 0, Math.PI * 2);
     context.lineWidth = 2 / scale;
-    context.strokeStyle = "#000";
+    context.strokeStyle = palette.fg;
     context.stroke();
   }
   context.restore();
 }
 
-function drawLabel(node: DrawNode, context: CanvasRenderingContext2D, scale: number, alpha: number) {
+function drawLabel(node: DrawNode, context: CanvasRenderingContext2D, scale: number, alpha: number, fg: string) {
   const x = node.x;
   const y = node.y;
   if (x == null || y == null || !Number.isFinite(x) || !Number.isFinite(y)) return;
@@ -1539,7 +1568,7 @@ function drawLabel(node: DrawNode, context: CanvasRenderingContext2D, scale: num
   context.globalAlpha = alpha;
   const fontSize = LABEL_FONT / scale;
   context.font = `${fontSize}px sans-serif`;
-  context.fillStyle = "#000";
+  context.fillStyle = fg;
   context.textAlign = "left";
   context.textBaseline = "middle";
   context.fillText(node.name, x + radius + LABEL_GAP, y);

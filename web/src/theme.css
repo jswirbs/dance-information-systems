@@ -1,0 +1,69 @@
+/* Color roles for the page. New UI should use these variables, not raw black or white.
+   --bg is paper, --fg is text and icons, --line is borders and rules (it follows --fg),
+   --divider is the lighter hairline, --danger is error text.
+   --node-* are the graph node fills. Dark mode swaps paper and ink.
+   Node colors there are the channel-wise inverse of the light values (255 minus each channel).
+   To add a color, define it in both themes and prefer a variable at the use site. */
+
+:root {
+  color-scheme: light;
+  --bg: #ffffff;
+  --fg: #000000;
+  --line: var(--fg);
+  --divider: #cccccc;
+  --danger: #990000;
+  --track: rgb(0 0 0 / 0.2);
+  --shadow: 0 4px 16px rgb(0 0 0 / 0.2);
+  --shadow-up: 0 -2px 8px rgb(0 0 0 / 0.2);
+  --scrim: linear-gradient(to bottom, rgb(255 255 255 / 0), var(--bg) 68%);
+  --node-artist: #8c3d2f;
+  --node-label: #1e6a4a;
+  --node-release: #2c4e7a;
+  --node-fallback: #221c16;
+  color: var(--fg);
+  background: var(--bg);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #000000;
+  --fg: #ffffff;
+  --divider: #333333;
+  --danger: #ff6666;
+  --track: rgb(255 255 255 / 0.2);
+  --shadow: 0 4px 16px rgb(255 255 255 / 0.2);
+  --shadow-up: 0 -2px 8px rgb(255 255 255 / 0.2);
+  --scrim: linear-gradient(to bottom, rgb(0 0 0 / 0), var(--bg) 68%);
+  --node-artist: #73c2d0;
+  --node-label: #e195b5;
+  --node-release: #d3b185;
+  --node-fallback: #dde3e9;
+}
+
+::selection {
+  background: var(--fg);
+  color: var(--bg);
+}
+
+@property --bg { syntax: "<color>"; inherits: true; initial-value: #ffffff; }
+@property --fg { syntax: "<color>"; inherits: true; initial-value: #000000; }
+@property --divider { syntax: "<color>"; inherits: true; initial-value: #cccccc; }
+@property --danger { syntax: "<color>"; inherits: true; initial-value: #990000; }
+@property --node-artist { syntax: "<color>"; inherits: true; initial-value: #8c3d2f; }
+@property --node-label { syntax: "<color>"; inherits: true; initial-value: #1e6a4a; }
+@property --node-release { syntax: "<color>"; inherits: true; initial-value: #2c4e7a; }
+@property --node-fallback { syntax: "<color>"; inherits: true; initial-value: #221c16; }
+
+@media (prefers-reduced-motion: no-preference) {
+  :root {
+    transition:
+      --bg 420ms ease,
+      --fg 420ms ease,
+      --divider 420ms ease,
+      --danger 420ms ease,
+      --node-artist 420ms ease,
+      --node-label 420ms ease,
+      --node-release 420ms ease,
+      --node-fallback 420ms ease;
+  }
+}
