@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState } from "react";
 import type { EntityType, RelatedRow, SearchHit } from "../../src/shared/types";
 import { Ellipsis } from "./ellipsis";
+import { HoverTip, useDelayedTip } from "./tooltip";
 import { ScrollList, Thumb } from "./ui";
 
 const TARGETS: EntityType[] = ["artist", "label", "release"];
@@ -88,54 +88,15 @@ export function ExplorePanel({
   );
 }
 
-const SCORE_TIP_DELAY = 800;
-
 function ScoreMark({ value, note }: { value: number; note: string }) {
-  const ref = useRef<HTMLElement>(null);
-  const timer = useRef<number | null>(null);
-  const [tip, setTip] = useState<{ top: number; left: number; above: boolean } | null>(null);
-
-  const clear = () => {
-    if (timer.current != null) window.clearTimeout(timer.current);
-    timer.current = null;
-  };
-
-  const hide = () => {
-    clear();
-    setTip(null);
-  };
-
-  const show = () => {
-    clear();
-    if (!note) return;
-    timer.current = window.setTimeout(() => {
-      const box = ref.current?.getBoundingClientRect();
-      if (!box) return;
-      const above = window.innerHeight - box.bottom < 160 && box.top > 160;
-      setTip({ top: above ? box.top : box.bottom, left: box.right, above });
-    }, SCORE_TIP_DELAY);
-  };
-
-  useEffect(() => hide, []);
-
-  useEffect(() => {
-    if (!tip) return;
-    const close = () => setTip(null);
-    window.addEventListener("scroll", close, true);
-    window.addEventListener("resize", close);
-    return () => {
-      window.removeEventListener("scroll", close, true);
-      window.removeEventListener("resize", close);
-    };
-  }, [tip]);
-
+  const tip = useDelayedTip<HTMLElement>(Boolean(note));
   return (
-    <em className="score" ref={ref} onMouseEnter={show} onMouseLeave={hide}>
+    <em className="score" ref={tip.ref} onMouseEnter={tip.enter} onMouseLeave={tip.leave}>
       {formatScore(value)}
-      {tip && (
-        <span className={`score-tip ${tip.above ? "above" : "below"}`} role="tooltip" style={{ top: tip.top, left: tip.left }}>
+      {tip.tip && (
+        <HoverTip tip={tip.tip}>
           <ScoreNote note={note} />
-        </span>
+        </HoverTip>
       )}
     </em>
   );

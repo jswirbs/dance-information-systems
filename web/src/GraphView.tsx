@@ -1,10 +1,11 @@
 import { forceCollide, forceRadial } from "d3-force";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D, { type ForceGraphMethods } from "react-force-graph-2d";
 import { ThinkingOrb } from "thinking-orbs";
 import { orbGravity } from "./cursor";
 import { MAX_NODE_CAP, MIN_NODE_CAP } from "../../src/shared/constants";
 import type { EntityType, GraphLink, GraphNode, GraphPayload } from "../../src/shared/types";
+import { EntityPlayButton } from "./EntityPlay";
 import { Popover } from "./Popover";
 
 type DrawNode = GraphNode & { x?: number; y?: number; vx?: number; vy?: number; fx?: number; fy?: number };
@@ -58,6 +59,10 @@ const LABEL_FONT = 11;
 const LAYOUT_KEY = "graph-explore-layout";
 const FADE_TAU = 110;
 const FADE_SNAP = 0.02;
+const PLAY_BUTTON = 22;
+// Graph units. The play button sits this far off the node, matching the label.
+const LABEL_GAP = 4;
+const HOVER_CLEAR_MS = 48;
 
 export function GraphView({
   payload,
@@ -114,11 +119,21 @@ export function GraphView({
   const focusedId = useRef<string | null>(null);
   const labelIds = useRef<Set<string> | null>(null);
   const hoverRef = useRef<string | null>(null);
+  const hoverLock = useRef(false);
+  // Force-graph keeps the last pointer position, so a pointer that has left the frame
+  // would otherwise keep the node under that stale point hovered.
+  const pointerInside = useRef(false);
+  const pointer = useRef({ x: 0, y: 0 });
+  const hoverClear = useRef<number | null>(null);
+  const playRef = useRef<HTMLDivElement>(null);
+  const [hoverNode, setHoverNode] = useState<DrawNode | null>(null);
   const nodeAlpha = useRef(new Map<string, number>());
   const linkAlpha = useRef(new Map<string, number>());
   const fadeClock = useRef(0);
   const fadingRef = useRef(false);
   const activeLayout: GraphLayout = layout === "path" ? "path" : exploreLayout;
+  const layoutRef = useRef(activeLayout);
+  layoutRef.current = activeLayout;
 
   const projected = useMemo(() => projectGraph(payload, visible), [payload, visible]);
   const data = useMemo(() => {
@@ -253,6 +268,114 @@ export function GraphView({
     [data.nodes, selectedId],
   );
 
+  useEffect(() => {
+    hoverRef.current = null;
+    setHoverNode(null);
+    return () => {
+      if (hoverClear.current != null) window.clearTimeout(hoverClear.current);
+    };
+  }, [data]);
+
+  useLayoutEffect(() => {
+    const node = hoverNode;
+    if (!node) return;
+    let frame = 0;
+    const place = () => {
+      const element = playRef.current;
+      const graph = ref.current;
+      if (!element || !graph || node.x == null || node.y == null || !Number.isFinite(node.x) || !Number.isFinite(node.y)) return;
+      const point = graph.graph2ScreenCoords(node.x, node.y);
+      const radius = (node.seed ? 8 : 5) * graph.zoom();
+      const gap = LABEL_GAP * graph.zoom();
+      element.style.left = `${point.x - radius - gap - PLAY_BUTTON}px`;
+      element.style.top = `${point.y - PLAY_BUTTON / 2}px`;
+      element.style.visibility = "visible";
+    };
+    place();
+    const tick = () => {
+      place();
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [hoverNode]);
+
+  function cancelHoverClear() {
+    if (hoverClear.current != null) window.clearTimeout(hoverClear.current);
+    hoverClear.current = null;
+  }
+
+  function releaseHover() {
+    cancelHoverClear();
+    hoverClear.current = window.setTimeout(() => {
+      hoverClear.current = null;
+      if (hoverLock.current) return;
+      hoverRef.current = null;
+      setHoverNode(null);
+      if (layoutRef.current !== "path") {
+        fadeClock.current = 0;
+        setFading(true);
+      }
+    }, HOVER_CLEAR_MS);
+  }
+
+  // Screen distance from the pointer to the node's hit circle (radius 12 in graph space).
+  function pointerHitsNode(clientX: number, clientY: number, node: DrawNode): boolean {
+    const graph = ref.current;
+    const canvas = frameRef.current?.querySelector("canvas");
+    if (!graph || !canvas || node.x == null || node.y == null) return false;
+    const origin = canvas.getBoundingClientRect();
+    const point = graph.graph2ScreenCoords(node.x, node.y);
+    const dx = clientX - origin.left - point.x;
+    const dy = clientY - origin.top - point.y;
+    const reach = 12 * graph.zoom();
+    return dx * dx + dy * dy <= reach * reach;
+  }
+
+  function holdHover(node: DrawNode) {
+    cancelHoverClear();
+    if (hoverRef.current === node.id) return;
+    hoverRef.current = node.id;
+    setHoverNode((current) => (current?.id === node.id ? current : node));
+    if (layoutRef.current !== "path") {
+      fadeClock.current = 0;
+      setFading(true);
+    }
+  }
+
+  useEffect(() => {
+    const frame = frameRef.current;
+    if (!frame) return;
+    const leaveGraph = () => {
+      hoverLock.current = false;
+      releaseHover();
+    };
+    const leave = (event: PointerEvent) => {
+      if (event.relatedTarget instanceof Node && frame.contains(event.relatedTarget)) return;
+      leaveGraph();
+    };
+    // A pointer event outside the frame means the node is no longer hovered, including when the
+    // pointer jumps away without a move across the canvas.
+    const away = (event: PointerEvent) => {
+      pointer.current = { x: event.clientX, y: event.clientY };
+      const target = event.target;
+      if (target instanceof Node && (frame.contains(target) || playRef.current?.contains(target))) {
+        pointerInside.current = true;
+        return;
+      }
+      pointerInside.current = false;
+      leaveGraph();
+    };
+    frame.addEventListener("pointerleave", leave);
+    window.addEventListener("pointermove", away, true);
+    window.addEventListener("pointerdown", away, true);
+    return () => {
+      frame.removeEventListener("pointerleave", leave);
+      window.removeEventListener("pointermove", away, true);
+      window.removeEventListener("pointerdown", away, true);
+    };
+  }, []);
+
   function chooseExploreLayout(next: ExploreLayout) {
     setExploreLayout(next);
     try {
@@ -366,31 +489,70 @@ export function GraphView({
                 ),
               });
             }}
-            onNodeHover={
-              activeLayout === "path"
-                ? undefined
-                : (node) => {
-                    const id = node ? (node as DrawNode).id : null;
-                    if (hoverRef.current === id) return;
-                    hoverRef.current = id;
-                    // The canvas may have been paused since the last step. A stale clock
-                    // would spend that whole gap in one jump, so the return starts like a fresh frame.
-                    fadeClock.current = 0;
-                    setFading(true);
-                  }
-            }
+            onNodeHover={(node) => {
+              if (!pointerInside.current) return;
+              if (node) holdHover(node as DrawNode);
+              else releaseHover();
+            }}
             onBackgroundRightClick={closeMenu}
             onRenderFramePre={prepareLabels}
             onRenderFramePost={paintLabels}
             nodeCanvasObject={(node, context, scale) => paintNode(node as DrawNode, context, scale)}
-            nodePointerAreaPaint={(node, color, context) => {
+            nodePointerAreaPaint={(node, color, context, scale) => {
+              const drawn = node as DrawNode;
+              const x = drawn.x ?? 0;
+              const y = drawn.y ?? 0;
+              const radius = drawn.seed ? 8 : 5;
+              const scaleSafe = Math.max(scale, 0.01);
+              const button = PLAY_BUTTON / scaleSafe;
               context.fillStyle = color;
               context.beginPath();
-              context.arc(node.x ?? 0, node.y ?? 0, 12, 0, Math.PI * 2);
+              context.arc(x, y, 12, 0, Math.PI * 2);
+              // A bridge to the play button, which sits just left of the circle. The button
+              // itself is HTML, so the hit area only has to meet its right edge.
+              const edge = radius + LABEL_GAP;
+              if (edge > 12) context.rect(x - edge, y - button / 2, edge - 12, button);
               context.fill();
             }}
           />
         ) : null}
+        {hoverNode && ready && !loading && (
+          <div
+            className="graph-play"
+            ref={playRef}
+            style={{ visibility: "hidden" }}
+            onPointerEnter={() => {
+              hoverLock.current = true;
+              cancelHoverClear();
+            }}
+            onPointerLeave={(event) => {
+              hoverLock.current = false;
+              const node = hoverNode;
+              if (node && pointerHitsNode(event.clientX, event.clientY, node)) {
+                cancelHoverClear();
+                return;
+              }
+              const ontoGraph = event.relatedTarget instanceof Node && frameRef.current?.contains(event.relatedTarget);
+              if (!ontoGraph) {
+                releaseHover();
+                return;
+              }
+              // The leave point can sit just outside the hit circle while the pointer
+              // is traveling onto the node. The graph will not re-report a node it
+              // already considers hovered, so recheck after this move lands.
+              requestAnimationFrame(() => {
+                if (hoverLock.current) return;
+                if (node && pointerHitsNode(pointer.current.x, pointer.current.y, node)) {
+                  cancelHoverClear();
+                  return;
+                }
+                releaseHover();
+              });
+            }}
+          >
+            <EntityPlayButton key={hoverNode.id} type={hoverNode.entityType} id={hoverNode.discogsId} name={hoverNode.name} />
+          </div>
+        )}
       </div>
       <Popover open={menu != null} onClose={closeMenu} className="context-menu" role="menu" style={menu ? { left: menu.left, top: menu.top } : undefined}>
         {menu && (
@@ -1066,7 +1228,7 @@ function chooseLabels(
     const width = Math.max(context.measureText(node.name).width, node.name.length * fontSize * 0.5);
     const height = fontSize * 1.15;
     const radius = node.seed ? 8 : 5;
-    const box = { x: (node.x ?? 0) + radius + 4, y: (node.y ?? 0) - height / 2, w: width, h: height };
+    const box = { x: (node.x ?? 0) + radius + LABEL_GAP, y: (node.y ?? 0) - height / 2, w: width, h: height };
     if (must || !boxes.some((other) => overlaps(box, other, pad))) {
       shown.add(node.id);
       boxes.push(box);
@@ -1141,6 +1303,6 @@ function drawLabel(node: DrawNode, context: CanvasRenderingContext2D, scale: num
   context.fillStyle = "#000";
   context.textAlign = "left";
   context.textBaseline = "middle";
-  context.fillText(node.name, x + radius + 4, y);
+  context.fillText(node.name, x + radius + LABEL_GAP, y);
   context.restore();
 }

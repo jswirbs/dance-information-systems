@@ -129,7 +129,7 @@ main {
   cursor: help;
 }
 
-.score-tip {
+.hover-tip {
   position: fixed;
   z-index: 30;
   width: max-content;
@@ -145,8 +145,10 @@ main {
   pointer-events: none;
 }
 .score-tip-math { display: block; margin-top: 0.65em; }
-.score-tip.above { transform: translate(-100%, calc(-100% - 6px)); }
-.score-tip.below { transform: translate(-100%, 6px); }
+.hover-tip.align-end.above { transform: translate(-100%, calc(-100% - 6px)); }
+.hover-tip.align-end.below { transform: translate(-100%, 6px); }
+.hover-tip.align-start.above { transform: translate(0, calc(-100% - 6px)); }
+.hover-tip.align-start.below { transform: translate(0, 6px); }
 
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 
@@ -305,17 +307,12 @@ main {
   border-bottom: 1px solid #ccc;
   cursor: pointer;
 }
-.rows .playlist-row > .play-toggle {
-  display: grid;
-  place-items: center;
+.rows .playlist-row > .play-toggle-wrap { flex: none; }
+.rows .playlist-row .play-toggle {
   width: 22px;
   height: 22px;
-  padding: 0;
-  flex: none;
-  border: 1px solid #000;
-  background: #fff;
 }
-.rows .playlist-row > .play-toggle svg { width: 13px; height: 13px; }
+.rows .playlist-row .play-toggle svg { width: 13px; height: 13px; }
 .playlist-copy { flex: 1; min-width: 0; }
 .playlist-row strong { display: block; }
 .playlist-row .playlist-artist,
@@ -325,6 +322,7 @@ main {
   padding: 0;
   border: 0;
 }
+.play-toggle-wrap { display: grid; flex: none; }
 .play-toggle {
   display: grid;
   place-items: center;
@@ -337,13 +335,16 @@ main {
   cursor: pointer;
 }
 .play-toggle:disabled { opacity: 0.4; cursor: default; }
+.play-toggle.is-blocked { opacity: 0.45; }
+.play-toggle.is-static { cursor: help; }
 .play-toggle svg { width: 14px; height: 14px; fill: currentColor; display: block; }
+.play-toggle.is-blocked svg { fill: none; stroke: currentColor; stroke-width: 2; }
+.tracks .play-toggle-wrap,
 .tracks .play-toggle {
   width: 18px;
   height: 18px;
-  border: 1px solid #000;
-  background: #fff;
 }
+.tracks .play-toggle { border: 1px solid #000; background: #fff; }
 .tracks .play-toggle svg { width: 10px; height: 10px; }
 .play-toggle-spacer { width: 18px; height: 18px; }
 .path-player { margin-top: 8px; display: grid; gap: 6px; }
@@ -459,7 +460,12 @@ main {
 .detail-body { display: grid; gap: 16px; }
 
 .detail p { margin: 0; }
-.detail-head { display: flex; gap: 12px; align-items: flex-start; }
+.detail-head {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+}
 .detail-copy {
   display: grid;
   grid-template-rows: 24px auto 24px;
@@ -603,6 +609,17 @@ main {
 .graph-settings-toggle svg { display: block; }
 
 .graph-frame { position: absolute; inset: 0; }
+.graph-play {
+  position: absolute;
+  z-index: 1;
+  width: 22px;
+  height: 22px;
+}
+.graph-play .play-toggle {
+  width: 22px;
+  height: 22px;
+}
+.graph-play .play-toggle svg { width: 11px; height: 11px; }
 .graph-loading {
   position: absolute;
   inset: 0;

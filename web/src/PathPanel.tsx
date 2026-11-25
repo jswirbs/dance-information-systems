@@ -1,8 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FocusEvent } from "react";
 import { PATH_MAX_HOPS } from "../../src/shared/constants";
+import { playbackProblemMessage } from "../../src/shared/playback";
 import type { EntityType, PathKind, PathPayload, PathTrack, SearchHit } from "../../src/shared/types";
 import { api } from "./api";
-import { PauseIcon, PlayIcon, warmupYouTube } from "./PathPlayer";
+import { PlayToggle } from "./PlayToggle";
+import { warmupYouTube } from "./PathPlayer";
 import { usePlayback, type Playable } from "./player";
 import { SearchSuggest } from "./SearchSuggest";
 import { Ellipsis } from "./ellipsis";
@@ -346,14 +348,12 @@ function PlaylistRow({
         if (!busy) onToggle();
       }}
     >
-      <button
-        type="button"
-        className="play-toggle"
-        disabled={busy}
-        aria-label={busy ? "Finding video" : missing && !active ? "No video found" : showPause ? "Pause" : "Play"}
-      >
-        {busy ? <Ellipsis /> : showPause ? <PauseIcon /> : <PlayIcon />}
-      </button>
+      <PlayToggle
+        paused={!showPause}
+        busy={busy}
+        error={missing && !active ? playbackProblemMessage("release", "no_video") : null}
+        onToggle={onToggle}
+      />
       <Thumb url={thumbUrl} name={track.releaseName} type="release" />
       <span className="playlist-copy">
         <strong>

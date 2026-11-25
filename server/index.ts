@@ -6,6 +6,7 @@ import type { EntityType, PathKind, Seed } from "../src/shared/types.js";
 import { graphFor } from "./graph.js";
 import { ensureImage } from "./images.js";
 import { catalogPath, isQueryTimeout, PathRequestError } from "./path.js";
+import { playbackFor } from "./playback.js";
 import { entityDetail, related, search } from "./queries.js";
 import { searchYouTube } from "./youtube.js";
 
@@ -48,6 +49,15 @@ app.post("/api/graph", async (c) => {
   if (!seeds || !target) return c.json({ error: "seeds and target are required" }, 400);
   const nodeCap = clampRange(body?.nodeCap, DEFAULT_NODE_CAP, MIN_NODE_CAP, MAX_NODE_CAP);
   return c.json(await graphFor(seeds, target, nodeCap));
+});
+
+app.get("/api/entities/:type/:id/playback", async (c) => {
+  const type = parseType(c.req.param("type"));
+  const id = Number(c.req.param("id"));
+  if (!type || !Number.isFinite(id)) return c.json({ error: "unknown entity" }, 400);
+  const payload = await playbackFor(type, id);
+  if (!payload) return c.json({ error: "not found" }, 404);
+  return c.json(payload);
 });
 
 app.get("/api/entities/:type/:id", async (c) => {

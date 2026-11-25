@@ -1,9 +1,10 @@
 import { Fragment, useEffect, useMemo } from "react";
-import type { EntityDetail, EntityType, Track } from "../../src/shared/types";
-import { titlesMatch } from "../../src/shared/youtube";
-import { PauseIcon, PlayIcon, warmupYouTube } from "./PathPlayer";
-import { Ellipsis } from "./ellipsis";
-import { usePlayback, type Playable, type PlayingArtist } from "./player";
+import { playbackProblemMessage } from "../../src/shared/playback";
+import type { EntityDetail, EntityType } from "../../src/shared/types";
+import { PlayToggle } from "./PlayToggle";
+import { warmupYouTube } from "./PathPlayer";
+import { playablesFromRelease, releaseSource } from "./queue";
+import { usePlayback } from "./player";
 
 export function ReleaseTracks({
   record,
@@ -12,21 +13,8 @@ export function ReleaseTracks({
   record: EntityDetail;
   onOpen: (type: EntityType, id: number) => void;
 }) {
-  const source = `release:${record.type}:${record.id}`;
-  const items = useMemo<Playable[]>(
-    () =>
-      record.tracklist.map((track, index) => ({
-        key: `${record.id}:${index}:${track.title}`,
-        title: track.title,
-        artists: trackArtists(record, track),
-        releaseId: record.id,
-        releaseName: record.name,
-        meta: [track.position, track.duration].filter(Boolean).join(" · ") || null,
-        videoSrc: matchingVideoSrc(record, track),
-        searchQuery: track.title.trim() ? searchQuery(record, track) : "",
-      })),
-    [record],
-  );
+  const source = releaseSource(record.id);
+  const items = useMemo(() => playablesFromRelease(record), [record]);
   const { session, resolving, failed, playAt } = usePlayback(source, items);
   useEffect(() => {
     if (record.tracklist.length > 0) warmupYouTube();
@@ -41,17 +29,12 @@ export function ReleaseTracks({
         return (
           <li key={`${track.position}-${track.title}-${index}`}>
             {playable ? (
-              <button
-                type="button"
-                className="play-toggle"
-                disabled={resolving === index}
-                aria-label={
-                  resolving === index ? "Finding video" : failed.includes(index) && !active ? "No video found" : showPause ? "Pause" : "Play"
-                }
-                onClick={() => void playAt(index)}
-              >
-                {resolving === index ? <Ellipsis /> : showPause ? <PauseIcon /> : <PlayIcon />}
-              </button>
+              <PlayToggle
+                paused={!showPause}
+                busy={resolving === index}
+                error={failed.includes(index) && !active ? playbackProblemMessage("release", "no_video") : null}
+                onToggle={() => void playAt(index)}
+              />
             ) : (
               <span className="play-toggle-spacer" />
             )}
@@ -77,31 +60,4 @@ export function ReleaseTracks({
       })}
     </ol>
   );
-}
-
-function trackArtists(record: EntityDetail, track: Track): PlayingArtist[] {
-  if (track.artists.length > 0) {
-    return track.artists.map((artist) => ({ id: artist.id, name: artist.anv || artist.name })).filter((artist) => artist.name);
-  }
-  return record.credits
-    .filter((credit) => credit.scope === "release" && credit.role === "Main")
-    .map((credit) => ({ id: credit.id, name: credit.anv || credit.name }))
-    .filter((artist) => artist.name);
-}
-
-function matchingVideoSrc(record: EntityDetail, track: Track): string | null {
-  for (const video of record.videos) {
-    if (titlesMatch(track.title, video.title)) return video.src;
-  }
-  return null;
-}
-
-function searchQuery(record: EntityDetail, track: Track): string {
-  const artists = track.artists.map((artist) => artist.anv || artist.name).filter(Boolean);
-  const mains = record.credits
-    .filter((credit) => credit.scope === "release" && credit.role === "Main")
-    .map((credit) => credit.anv || credit.name)
-    .filter(Boolean);
-  const who = artists.length > 0 ? artists.join(" ") : mains.join(" ");
-  return [who || record.name, track.title].filter(Boolean).join(" ");
 }

@@ -3,6 +3,7 @@ import { Fragment, useEffect, useLayoutEffect, useRef, useState, type ReactNode,
 import { discogsMentionUrl } from "../../src/shared/discogsText";
 import { profileLinks, type ProfileLink } from "../../src/shared/siteLinks";
 import type { AboutMention, AboutRun, AliasRef, Credit, EntityDetail, EntityType, IssuedLabel } from "../../src/shared/types";
+import { EntityPlayButton } from "./EntityPlay";
 import { ReleaseTracks } from "./ReleaseTracks";
 import { SiteIcon } from "./siteIcons";
 
@@ -379,6 +380,7 @@ export function Detail({
             </ExternalLink>
           </p>
         </div>
+        <EntityPlayButton className="entity-play" type={record.type} id={record.id} name={record.name} record={record} />
       </div>
       {(facts.length > 0 || hasAbout || record.tracklist.length > 0) && (
         <div className="detail-body">

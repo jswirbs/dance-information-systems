@@ -204,3 +204,14 @@ export type ImageResult = {
   thumbUrl: string | null;
   fetched: boolean;
 };
+
+/** A release reduced to what playback needs. */
+export type PlaybackRelease = {
+  id: number;
+  name: string;
+  tracklist: Track[];
+  credits: Credit[];
+  videos: VideoLink[];
+};
+
+export type PlaybackPayload = { release: PlaybackRelease } | { error: "no_release" };

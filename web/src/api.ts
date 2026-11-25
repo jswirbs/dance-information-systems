@@ -5,6 +5,7 @@ import type {
   ImageResult,
   PathKind,
   PathPayload,
+  PlaybackPayload,
   RelatedRow,
   SearchHit,
   Seed,
@@ -50,5 +51,6 @@ export const api = {
     postJson<PathPayload>("/api/path", { stops, kind, seed, ...(avoid ? { avoid } : {}) }),
   youtubeSearch: (q: string) => getJson<{ videoId: string | null; searchUrl: string }>(`/api/youtube-search?q=${encodeURIComponent(q)}`),
   entity: (type: EntityType, id: number) => getJson<EntityDetail>(`/api/entities/${type}/${id}`),
+  playback: (type: EntityType, id: number) => getJson<PlaybackPayload>(`/api/entities/${type}/${id}/playback`),
   image: (type: EntityType, id: number) => postJson<ImageResult>(`/api/entities/${type}/${id}/image`, {}),
 };

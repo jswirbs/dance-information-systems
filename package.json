@@ -8,7 +8,7 @@
     "dev:api": "tsx server/index.ts",
     "dev:web": "pnpm --filter web dev",
     "check:reasons": "tsx server/reasons.check.ts",
-    "test": "tsx --test server/walkJoin.test.ts src/shared/youtube.test.ts src/shared/discogsText.test.ts src/shared/siteLinks.test.ts ingest/filter.test.ts && tsx server/reasons.check.ts",
+    "test": "tsx --test server/walkJoin.test.ts src/shared/youtube.test.ts src/shared/discogsText.test.ts src/shared/siteLinks.test.ts src/shared/playback.test.ts ingest/filter.test.ts && tsx server/reasons.check.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p web/tsconfig.json"
   },
   "dependencies": {
