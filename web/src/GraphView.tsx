@@ -1,5 +1,5 @@
 import { forceCollide, forceRadial } from "d3-force";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D, { type ForceGraphMethods } from "react-force-graph-2d";
 import { ThinkingOrb } from "thinking-orbs";
 import { orbGravity } from "./cursor";
@@ -119,8 +119,6 @@ export function GraphView({
   const frameRef = useRef<HTMLDivElement>(null);
   const settingsRef = useRef<HTMLDivElement>(null);
   const [open, setOpen] = useState(false);
-  const [gearOver, setGearOver] = useState(false);
-  const [gearReady, setGearReady] = useState(true);
   const [menu, setMenu] = useState<NodeMenu | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const [visible, setVisible] = useState<Record<EntityType, boolean>>({ artist: true, label: true, release: true });
@@ -513,19 +511,7 @@ export function GraphView({
             aria-haspopup="dialog"
             aria-label="Settings"
             title="Settings"
-            style={{ "--gear-turn": `${open ? (gearReady && gearOver ? 120 : 180) : gearReady && gearOver ? 60 : 0}deg` } as CSSProperties}
-            onPointerEnter={() => {
-              if (gearReady) setGearOver(true);
-            }}
-            onPointerLeave={() => {
-              setGearOver(false);
-              setGearReady(true);
-            }}
-            onClick={() => {
-              setGearReady(false);
-              setGearOver(false);
-              setOpen((current) => !current);
-            }}
+            onClick={() => setOpen((current) => !current)}
           >
             <GearIcon />
           </button>
@@ -619,7 +605,7 @@ export function GraphView({
                 ...menuPosition(
                   event.clientX,
                   event.clientY,
-                  menuHeight(onToggleSeed != null, onReplaceSeed != null, onExploreNode != null, onStartPath != null),
+                  menuHeight(onToggleSeed != null, onReplaceSeed != null && !drawn.seed, onExploreNode != null, onStartPath != null),
                 ),
               });
             }}
@@ -738,7 +724,7 @@ export function GraphView({
                 {menu.seed ? "Remove seed" : "Add seed"}
               </button>
             )}
-            {onReplaceSeed && (
+            {onReplaceSeed && !menu.seed && (
               <button
                 type="button"
                 role="menuitem"

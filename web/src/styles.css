@@ -715,7 +715,11 @@ main {
 
 .graph-settings-toggle svg {
   display: block;
-  transform: rotate(var(--gear-turn, 0deg));
+  transform: rotate(0deg);
+}
+
+.graph-settings-toggle[aria-expanded="true"] svg {
+  transform: rotate(180deg);
 }
 
 @media (prefers-reduced-motion: no-preference) {

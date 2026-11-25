@@ -423,7 +423,9 @@ export function App() {
             <Detail
               record={detail}
               useLabel={mode === "explore" ? (detailIsSeed ? "Remove seed" : "Add seed") : null}
-              replaceLabel={mode === "explore" ? (seeds.length > 1 ? "Replace seeds" : "Replace seed") : null}
+              replaceLabel={
+                mode === "explore" && !detailIsSeed ? (seeds.length > 1 ? "Replace seeds" : "Replace seed") : null
+              }
               onUse={useFromDetail}
               onReplace={replaceFromDetail}
               onOpen={(type, id) => void openDetail(type, id)}
