@@ -358,29 +358,26 @@ export function Detail({
         <div className="detail-copy">
           <p className="eyebrow">{record.type}</p>
           <h2>{record.name}</h2>
-          <p className="detail-actions">
-            {useLabel && (
-              <>
+          {(useLabel || (replaceLabel && onReplace)) && (
+            <p className="detail-actions">
+              {useLabel && (
                 <button type="button" className="text-button" onClick={onUse}>
                   {useLabel}
                 </button>
-                {" · "}
-              </>
-            )}
-            {replaceLabel && onReplace && (
-              <>
+              )}
+              {useLabel && replaceLabel && onReplace ? " · " : null}
+              {replaceLabel && onReplace && (
                 <button type="button" className="text-button" onClick={onReplace}>
                   {replaceLabel}
                 </button>
-                {" · "}
-              </>
-            )}
-            <ExternalLink className="text-button" href={discogsHref(record.type, record.id)}>
-              Discogs
-            </ExternalLink>
-          </p>
+              )}
+            </p>
+          )}
         </div>
-        <EntityPlayButton className="entity-play" type={record.type} id={record.id} name={record.name} record={record} />
+        <div className="detail-tools">
+          <DiscogsLink href={discogsHref(record.type, record.id)} />
+          <EntityPlayButton className="entity-play" type={record.type} id={record.id} name={record.name} record={record} />
+        </div>
       </div>
       {(facts.length > 0 || hasAbout || record.tracklist.length > 0) && (
         <div className="detail-body">
@@ -525,11 +522,9 @@ export function MissingDetail({ mention }: { mention: AboutMention }) {
         <div className="detail-copy">
           <p className="eyebrow">{mention.entity === "master" ? "master release" : mention.entity}</p>
           <h2>{mention.name}</h2>
-          <p className="detail-actions">
-            <ExternalLink className="text-button" href={discogsMentionUrl(mention)}>
-              Discogs
-            </ExternalLink>
-          </p>
+        </div>
+        <div className="detail-tools">
+          <DiscogsLink href={discogsMentionUrl(mention)} />
         </div>
       </div>
       <p className="blurb">{missingCopy(mention.entity)}</p>
@@ -569,21 +564,10 @@ function AboutPiece({ run, onMention }: { run: AboutRun; onMention: (mention: Ab
   return <s>{children}</s>;
 }
 
-function ExternalLink({ href, className, children }: { href: string; className?: string; children: ReactNode }) {
+function DiscogsLink({ href }: { href: string }) {
   return (
-    <a className={className ? `external-link ${className}` : "external-link"} href={href} target="_blank" rel="noreferrer">
-      <span>{children}</span>
-      <ExternalLinkIcon />
+    <a className="discogs-link" href={href} target="_blank" rel="noreferrer" aria-label="Discogs">
+      <SiteIcon id="discogs" />
     </a>
-  );
-}
-
-function ExternalLinkIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path d="M15 3h6v6" />
-      <path d="M10 14 21 3" />
-      <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-    </svg>
   );
 }

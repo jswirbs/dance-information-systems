@@ -5,13 +5,12 @@ import type { EntityType, PathKind, PathPayload, PathTrack, SearchHit } from "..
 import { api } from "./api";
 import { PlayToggle } from "./PlayToggle";
 import { warmupYouTube } from "./PathPlayer";
-import { usePlayback, type Playable } from "./player";
+import { PATH_SOURCE, usePlayback, type Playable } from "./player";
 import { SearchSuggest } from "./SearchSuggest";
 import { Ellipsis } from "./ellipsis";
 import { ScrollList, Thumb } from "./ui";
 
 const SLOT_LABELS = ["A", "B"];
-const PATH_SOURCE = "path";
 
 export function PathPanel({
   stops,

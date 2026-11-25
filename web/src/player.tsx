@@ -228,6 +228,9 @@ export function PlayerProvider({
   );
 }
 
+/** Queue key for the pathfinder playlist. */
+export const PATH_SOURCE = "path";
+
 export function usePlayer(): PlayerApi {
   const value = useContext(PlayerContext);
   if (!value) throw new Error("usePlayer requires PlayerProvider");

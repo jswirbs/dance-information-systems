@@ -77,7 +77,7 @@ main {
   line-height: 1;
 }
 
-.hits button, .rows button, .chip, .toggle button {
+.hits > li > button, .rows > li > button, .chip, .toggle button {
   background: #fff;
   border: 0;
   cursor: pointer;
@@ -98,7 +98,7 @@ main {
   vertical-align: baseline;
 }
 
-.hits button, .rows button {
+.hits > li > button, .rows > li > button {
   display: flex;
   gap: 8px;
   width: 100%;
@@ -474,22 +474,28 @@ main {
 }
 .detail-copy .eyebrow,
 .detail-actions { margin: 0; line-height: 24px; }
-.external-link {
-  text-decoration: none;
+.detail-tools {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
 }
-.detail-actions .external-link { white-space: nowrap; }
-.external-link > span { text-decoration: underline; }
-.external-link svg {
-  display: inline-block;
-  width: 0.85em;
-  height: 0.85em;
-  margin-left: 0.2em;
-  vertical-align: -0.1em;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 2;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+.discogs-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid #000;
+  background: #fff;
+  color: inherit;
+  text-decoration: none;
+  flex: none;
+}
+.discogs-link .site-icon {
+  width: 14px;
+  height: 14px;
+  fill: currentColor;
+  display: block;
 }
 .aka-wrap { position: relative; }
 .aka-measure {

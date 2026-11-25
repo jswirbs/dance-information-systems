@@ -6,6 +6,7 @@ import { orbGravity } from "./cursor";
 import { MAX_NODE_CAP, MIN_NODE_CAP } from "../../src/shared/constants";
 import type { EntityType, GraphLink, GraphNode, GraphPayload } from "../../src/shared/types";
 import { EntityPlayButton } from "./EntityPlay";
+import { PATH_SOURCE, usePlayer } from "./player";
 import { Popover } from "./Popover";
 
 type DrawNode = GraphNode & { x?: number; y?: number; vx?: number; vy?: number; fx?: number; fy?: number };
@@ -63,6 +64,10 @@ const PLAY_BUTTON = 22;
 // Graph units. The play button sits this far off the node, matching the label.
 const LABEL_GAP = 4;
 const HOVER_CLEAR_MS = 48;
+const BREATH_MS = 3900;
+const PULSE_MS = 5200;
+const AURA_FADE_TAU = 240;
+const AURA_SETTLE_TAU = 300;
 
 export function GraphView({
   payload,
@@ -108,6 +113,27 @@ export function GraphView({
   const [visible, setVisible] = useState<Record<EntityType, boolean>>({ artist: true, label: true, release: true });
   const [exploreLayout, setExploreLayout] = useState<ExploreLayout>(readExploreLayout);
   const [fading, setFading] = useState(false);
+  const [auraMoving, setAuraMoving] = useState(false);
+  const auraMovingRef = useRef(false);
+  const session = usePlayer().session;
+  const nowPlaying = useRef<{ nodes: Set<string>; link: { release: string; artists: Set<string> } | null }>({
+    nodes: new Set(),
+    link: null,
+  });
+  const aura = useRef<Aura>({
+    presence: 0,
+    breath: 0,
+    drift: 0,
+    travel: 0,
+    edge: 0,
+    running: false,
+    active: false,
+    breathOrigin: 0,
+    driftOrigin: 0,
+    travelOrigin: 0,
+    last: 0,
+  });
+  const motionKey = useRef("");
   const closeSettings = useCallback(() => setOpen(false), []);
   const closeMenu = useCallback(() => setMenu(null), []);
   const graphStore = useRef<{ signature: string; layout: string; data: SimGraph; cache: Map<string, DrawNode> }>({
@@ -134,6 +160,34 @@ export function GraphView({
   const activeLayout: GraphLayout = layout === "path" ? "path" : exploreLayout;
   const layoutRef = useRef(activeLayout);
   layoutRef.current = activeLayout;
+  const nodeActive = activeLayout !== "path" && session != null;
+  const linkActive = activeLayout === "path" && session?.source === PATH_SOURCE && session.releaseId != null;
+  const auraRunning = (nodeActive || linkActive) && session != null && !session.paused;
+  const trackKey = session ? `${session.source}:${session.index}:${session.releaseId ?? ""}` : "";
+  if (trackKey !== motionKey.current) {
+    const previous = motionKey.current;
+    motionKey.current = trackKey;
+    if (auraRunning && previous) {
+      aura.current.travel = 0;
+      aura.current.travelOrigin = performance.now();
+    }
+  }
+  setAuraIntent(aura.current, nodeActive || linkActive, auraRunning, performance.now());
+  const auraLive =
+    auraRunning ||
+    aura.current.breath > 0.015 ||
+    aura.current.drift > 0.015 ||
+    aura.current.travel > 0.015 ||
+    aura.current.edge > 0.015 ||
+    Math.abs(aura.current.presence - (nodeActive || linkActive ? 1 : 0)) > 0.015;
+  if (linkActive && session?.releaseId != null) {
+    nowPlaying.current.link = {
+      release: `release:${session.releaseId}`,
+      artists: new Set(session.artists.flatMap((artist) => (artist.id == null ? [] : [`artist:${artist.id}`]))),
+    };
+  } else if (activeLayout !== "path" || (aura.current.edge < 0.015 && aura.current.presence < 0.015)) {
+    nowPlaying.current.link = null;
+  }
 
   const projected = useMemo(() => projectGraph(payload, visible), [payload, visible]);
   const data = useMemo(() => {
@@ -154,8 +208,14 @@ export function GraphView({
     store.data = adoptGraph(projected, store.cache, activeLayout, layoutChanged, relatedType);
     return store.data;
   }, [projected, activeLayout, relatedType]);
+  if (nodeActive && session) nowPlaying.current.nodes = playingNodeIds(session, data.links);
+  else if (activeLayout === "path" || aura.current.presence < 0.015) nowPlaying.current.nodes = EMPTY_IDS;
 
   const ready = size.width > 0 && size.height > 0;
+
+  useEffect(() => {
+    if (auraLive || auraMoving) ref.current?.resumeAnimation();
+  }, [auraLive, auraMoving]);
 
   useEffect(() => {
     const frame = frameRef.current;
@@ -240,6 +300,12 @@ export function GraphView({
       const hover = activeLayout === "path" ? null : hoverRef.current;
       const moving = easeHover(data.nodes, data.links, hover, selectedId, nodeAlpha.current, linkAlpha.current, fadeClock);
       labelIds.current = activeLayout === "path" ? null : chooseLabels(data.nodes, hover, selectedId, scale, context);
+      stepAura(aura.current, performance.now());
+      const glowMoving = auraBusy(aura.current);
+      if (glowMoving !== auraMovingRef.current) {
+        auraMovingRef.current = glowMoving;
+        setAuraMoving(glowMoving);
+      }
       if (moving !== fadingRef.current) {
         fadingRef.current = moving;
         setFading(moving);
@@ -251,7 +317,7 @@ export function GraphView({
   const paintNode = useCallback(
     (node: DrawNode, context: CanvasRenderingContext2D, scale: number) => {
       const alpha = nodeAlpha.current.get(node.id) ?? 1;
-      drawNode(node, context, scale, node.id === selectedId, alpha);
+      drawNode(node, context, scale, node.id === selectedId, alpha, nowPlaying.current.nodes.has(node.id), aura.current);
     },
     [selectedId],
   );
@@ -465,11 +531,16 @@ export function GraphView({
             backgroundColor="#ffffff"
             nodeId="id"
             cooldownTicks={activeLayout === "rings" ? 160 : 90}
-            autoPauseRedraw={!fading}
+            autoPauseRedraw={!fading && !auraLive && !auraMoving}
             nodeLabel={activeLayout === "path" ? () => "" : (node) => nodePhrase(node as DrawNode)}
             linkLabel={(link) => linkPhrase(link as SimLink)}
             linkColor={(link) => linkPaint(link as SimLink, linkPresence(link as SimLink, linkAlpha.current))}
             linkWidth={(link) => linkWidth(link as SimLink, linkPresence(link as SimLink, linkAlpha.current))}
+            linkCanvasObjectMode={(link) => (nowPlaying.current.link && linkCarries(link as SimLink, nowPlaying.current.link) ? "after" : undefined)}
+            linkCanvasObject={(link, context, scale) => {
+              const play = nowPlaying.current.link;
+              if (play && linkCarries(link as SimLink, play)) paintEdgePulse(link as SimLink, context, scale, aura.current);
+            }}
             onNodeClick={(node) => {
               const drawn = node as DrawNode;
               onSelect(drawn.entityType, drawn.discogsId);
@@ -1271,15 +1342,183 @@ function GearIcon() {
   );
 }
 
-function drawNode(node: DrawNode, context: CanvasRenderingContext2D, scale: number, selected: boolean, alpha: number) {
+const EMPTY_IDS = new Set<string>();
+
+function playingNodeIds(
+  session: { releaseId: number | null; artists: { id: number | null }[] },
+  links: SimLink[],
+): Set<string> {
+  const ids = new Set<string>();
+  // Track artists, not every artist on the release, so a compilation only lights the current track.
+  for (const artist of session.artists) if (artist.id != null) ids.add(`artist:${artist.id}`);
+  if (session.releaseId == null) return ids;
+  const release = `release:${session.releaseId}`;
+  ids.add(release);
+  for (const link of links) {
+    if (link.kind !== "ISSUED") continue;
+    const source = endpointId(link.source);
+    const target = endpointId(link.target);
+    if (source === release && target.startsWith("label:")) ids.add(target);
+    else if (target === release && source.startsWith("label:")) ids.add(source);
+  }
+  return ids;
+}
+
+function linkCarries(link: SimLink, play: { release: string; artists: Set<string> }): boolean {
+  const source = endpointId(link.source);
+  const target = endpointId(link.target);
+  const other = source === play.release ? target : target === play.release ? source : null;
+  if (!other || (play.artists.size > 0 && !play.artists.has(other))) return false;
+  return link.kind === "PRIMARY_ON" || link.kind === "APPEARS_ON" || link.kind === "REMIXED";
+}
+
+type Aura = {
+  presence: number;
+  breath: number;
+  drift: number;
+  travel: number;
+  edge: number;
+  running: boolean;
+  active: boolean;
+  breathOrigin: number;
+  driftOrigin: number;
+  travelOrigin: number;
+  last: number;
+};
+
+function alignPhase(value: number, now: number, period: number): number {
+  const sine = Math.min(1, Math.max(-1, value * 2 - 1));
+  const theta = Math.asin(sine);
+  return now - ((theta + Math.PI / 2) / (Math.PI * 2)) * period;
+}
+
+function setAuraIntent(aura: Aura, active: boolean, running: boolean, now: number) {
+  if (running && !aura.running) {
+    aura.breathOrigin = alignPhase(aura.breath, now, BREATH_MS);
+    aura.driftOrigin = alignPhase(aura.drift, now, BREATH_MS * 1.7);
+    aura.travelOrigin = now - aura.travel * PULSE_MS;
+  }
+  aura.active = active;
+  aura.running = running;
+}
+
+function easeAura(current: number, target: number, dt: number, tau: number): number {
+  const next = current + (target - current) * (1 - Math.exp(-dt / tau));
+  return Math.abs(next - target) < 0.004 ? target : next;
+}
+
+function stepAura(aura: Aura, now: number) {
+  const dt = aura.last === 0 ? 16 : Math.min(48, Math.max(0, now - aura.last));
+  aura.last = now;
+  aura.presence = easeAura(aura.presence, aura.active ? 1 : 0, dt, AURA_FADE_TAU);
+  if (aura.running) {
+    aura.breath = 0.5 + 0.5 * Math.sin(((now - aura.breathOrigin) / BREATH_MS) * Math.PI * 2 - Math.PI / 2);
+    aura.drift = 0.5 + 0.5 * Math.sin(((now - aura.driftOrigin) / (BREATH_MS * 1.7)) * Math.PI * 2 - Math.PI / 2);
+    aura.travel = ((now - aura.travelOrigin) % PULSE_MS) / PULSE_MS;
+    aura.edge = easeAura(aura.edge, 1, dt, AURA_FADE_TAU);
+    return;
+  }
+  aura.breath = easeAura(aura.breath, 0, dt, AURA_SETTLE_TAU);
+  aura.drift = easeAura(aura.drift, 0, dt, AURA_SETTLE_TAU);
+  aura.edge = easeAura(aura.edge, 0, dt, AURA_FADE_TAU);
+  if (aura.edge < 0.08) aura.travel = easeAura(aura.travel, 0, dt, AURA_SETTLE_TAU);
+}
+
+function auraBusy(aura: Aura): boolean {
+  if (aura.running) return true;
+  if (Math.abs(aura.presence - (aura.active ? 1 : 0)) > 0.015) return true;
+  return aura.breath > 0.015 || aura.drift > 0.015 || aura.travel > 0.015 || aura.edge > 0.015;
+}
+
+function paintEdgePulse(link: SimLink, context: CanvasRenderingContext2D, scale: number, aura: Aura) {
+  const source = typeof link.source === "string" ? null : link.source;
+  const target = typeof link.target === "string" ? null : link.target;
+  if (!source || !target || source.x == null || source.y == null || target.x == null || target.y == null) return;
+  if (source.x === target.x && source.y === target.y) return;
+  const peak = -0.08 + aura.travel * 1.16;
+  const life = Math.sin(aura.travel * Math.PI) * aura.edge * aura.presence;
+  if (life < 0.02) return;
+  const from = COLOR[source.entityType] ?? "#221c16";
+  const to = COLOR[target.entityType] ?? "#221c16";
+  const safe = Math.max(scale, 0.01);
+  const steps = 36;
+  for (let i = 0; i <= steps; i += 1) {
+    const u = i / steps;
+    const delta = u - peak;
+    const spread = delta < 0 ? 0.32 : 0.14;
+    const amount = Math.exp(-0.5 * (delta / spread) ** 2) * life;
+    if (amount < 0.06) continue;
+    const x = source.x + (target.x - source.x) * u;
+    const y = source.y + (target.y - source.y) * u;
+    const reach = (12 + amount * 16) / safe;
+    fillAura(context, x, y, reach * 0.15, reach, mixHex(from, to, u), amount * 0.045);
+  }
+}
+
+function paintNodeAura(context: CanvasRenderingContext2D, x: number, y: number, radius: number, color: string, alpha: number, aura: Aura) {
+  const veil = aura.presence;
+  if (veil < 0.012) return;
+  const breath = aura.breath;
+  const drift = aura.drift;
+  const now = performance.now();
+  context.save();
+  context.globalAlpha = alpha;
+  // The filled disc is covered by the node. What remains is the blur spilling past its edge.
+  context.shadowColor = rgba(color, 0.95);
+  context.shadowBlur = veil * (16 + breath * 38);
+  context.fillStyle = rgba(color, veil * (0.28 + breath * 0.2));
+  context.beginPath();
+  context.arc(x, y, radius * 0.78, 0, Math.PI * 2);
+  context.fill();
+  context.restore();
+  const ox = Math.sin((now - aura.breathOrigin) / 4200) * 0.7 * breath;
+  const oy = Math.sin((now - aura.breathOrigin) / 3500) * 0.6 * breath;
+  fillAura(context, x + ox, y + oy, radius * 0.5, radius + veil * (4 + breath * 9), color, alpha * veil * (0.18 + breath * 0.1));
+  fillAura(context, x - ox, y - oy, radius * 0.85, radius + veil * (11 + drift * 16), color, alpha * veil * (0.07 + drift * 0.05));
+}
+
+function fillAura(context: CanvasRenderingContext2D, x: number, y: number, inner: number, outer: number, color: string, amount: number) {
+  if (outer <= inner + 0.2) return;
+  const gradient = context.createRadialGradient(x, y, Math.max(0, inner), x, y, outer);
+  gradient.addColorStop(0, rgba(color, amount));
+  gradient.addColorStop(0.32, rgba(color, amount * 0.5));
+  gradient.addColorStop(0.68, rgba(color, amount * 0.14));
+  gradient.addColorStop(1, rgba(color, 0));
+  context.fillStyle = gradient;
+  context.beginPath();
+  context.arc(x, y, outer, 0, Math.PI * 2);
+  context.fill();
+}
+
+function rgb(hex: string): [number, number, number] {
+  const value = Number.parseInt(hex.slice(1), 16);
+  return [(value >> 16) & 255, (value >> 8) & 255, value & 255];
+}
+
+function rgba(hex: string, alpha: number): string {
+  const [r, g, b] = rgb(hex);
+  return `rgba(${r},${g},${b},${alpha.toFixed(3)})`;
+}
+
+function mixHex(from: string, to: string, t: number): string {
+  const [ar, ag, ab] = rgb(from);
+  const [br, bg, bb] = rgb(to);
+  const u = Math.min(1, Math.max(0, t));
+  const hex = (channel: number) => Math.round(channel).toString(16).padStart(2, "0");
+  return `#${hex(ar + (br - ar) * u)}${hex(ag + (bg - ag) * u)}${hex(ab + (bb - ab) * u)}`;
+}
+
+function drawNode(node: DrawNode, context: CanvasRenderingContext2D, scale: number, selected: boolean, alpha: number, playing: boolean, aura: Aura) {
   const x = node.x ?? 0;
   const y = node.y ?? 0;
   const radius = node.seed ? 8 : 5;
+  const color = COLOR[node.entityType] ?? "#221c16";
   context.save();
+  if (playing) paintNodeAura(context, x, y, radius, color, alpha, aura);
   context.globalAlpha = alpha;
   context.beginPath();
   context.arc(x, y, radius, 0, Math.PI * 2);
-  context.fillStyle = COLOR[node.entityType] ?? "#221c16";
+  context.fillStyle = color;
   context.fill();
   if (selected) {
     context.beginPath();
